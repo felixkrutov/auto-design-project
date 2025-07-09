@@ -56,17 +56,24 @@ def solve_layout(sheet_url):
     ROOM_SIZE = 20
     print("2. Расставляем оборудование с помощью OR-Tools...")
     model = cp_model.CpModel()
-    positions = {item['name']: {'x': model.NewIntVar(0, int(ROOM_SIZE - item['width']), f"x_{item['name']}"), 
-                                'y': model.NewIntVar(0, int(ROOM_SIZE - item['depth']), f"y_{item['name']}")] 
-                 for item in equipment_list}
-    intervals_x = [model.NewIntervalVar(p['x'], int(eq['width']), p['x'] + int(eq['width']), f"ix_{eq['name']}") for eq, p in zip(equipment_list, positions.values())]
-    intervals_y = [model.NewIntervalVar(p['y'], int(eq['depth']), p['y'] + int(eq['depth']), f"iy_{eq['name']}") for eq, p in zip(equipment_list, positions.values())]
+    
+    # Вот здесь была ошибка, теперь она исправлена
+    positions = {
+        item['name']: {
+            'x': model.NewIntVar(0, int(ROOM_SIZE - item['width']), f"x_{item['name']}"), 
+            'y': model.NewIntVar(0, int(ROOM_SIZE - item['depth']), f"y_{item['name']}")
+        } 
+        for item in equipment_list
+    }
+    
+    intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width']), positions[item['name']]['x'] + int(item['width']), f"ix_{item['name']}") for item in equipment_list]
+    intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth']), positions[item['name']]['y'] + int(item['depth']), f"iy_{item['name']}") for item in equipment_list]
     model.AddNoOverlap2D(intervals_x, intervals_y)
     
     solver = cp_model.CpSolver()
     if solver.Solve(model) in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("  > Решение найдено!")
-        final_placements = [{'name': item['name'], 'x': solver.Value(positions[item['name']]['x']), 'y': solver.Value(positions[item['name']]['y']), **item} for item in equipment_list]
+        final_placements = [{'name': item['name'], 'x': solver.Value(positions[item['name']]['x']), 'y': solver.Value(positions[item['name']]['y']), 'width': item['width'], 'depth': item['depth']} for item in equipment_list]
         create_ifc_file(final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение для расстановки.")
