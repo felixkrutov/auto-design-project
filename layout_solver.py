@@ -30,19 +30,20 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     app_organization.Name = "AI Assistant"
     application = f.createIfcApplication(app_organization, "1.0", "AutoDesign Script", "ADS")
     
-    # --- ИСПРАВЛЕННАЯ СТРОКА ---
-    # Теперь все аргументы на своих местах
     owner_history = f.createIfcOwnerHistory(
         OwningUser=person_and_org, 
         OwningApplication=application, 
         ChangeAction="ADDED", 
         CreationDate=int(time.time())
     )
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, "Проект Цеха")
+    
+    # --- ИСПРАВЛЕННЫЙ БЛОК ---
+    # Вместо сложной несуществующей команды, делаем простое присваивание
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
-    f.createIfcRelAssignsToProject(ifcopenshell.guid.new(), owner_history, [project], None, context)
+    project.RepresentationContexts = [context]
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     site_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", None, None, site_placement)
