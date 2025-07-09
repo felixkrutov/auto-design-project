@@ -64,7 +64,9 @@ def create_ifc_file(placements, filename="prototype.ifc"):
         element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(x), float(y), 0.0))))
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, element_placement)
         
-        profile = f.createIfcRectangleProfileDef('AREA', None, width, depth)
+        # ИСПРАВЛЕНО: правильный порядок параметров для createIfcRectangleProfileDef
+        # Параметры: ProfileType, ProfileName, Position, XDim, YDim
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, width, depth)
         direction = f.createIfcDirection((0.0, 0.0, 1.0))
         solid = f.createIfcExtrudedAreaSolid(profile, None, direction, height)
         
