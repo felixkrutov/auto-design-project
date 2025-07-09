@@ -22,25 +22,33 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     f = ifcopenshell.file(schema="IFC4")
     project = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcProject", name="Проект Цеха")
     context = ifcopenshell.api.run("context.add_context", f, context_type="Model")
+    body = ifcopenshell.api.run("context.add_context", f, context_type="Model",
+                                 context_identifier="Body", target_view="MODEL_VIEW", parent=context)
     ifcopenshell.api.run("unit.assign_unit", f, length={"is_metric": True, "raw": "METRE"})
     site = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcSite", name="Участок")
-    
-    # Вот здесь были ошибки, теперь исправлено: product -> products=[...]
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, products=[site])
-    
     building = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuilding", name="Здание")
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, products=[building])
-    
     storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Первый этаж")
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[storey])
     
     for item in placements:
         name, x, y, width, depth = item['name'], item['x'], item['y'], item['width'], item['depth']
         height = 1.5
+        
+        # Создаем элемент и его геометрию (исправлено)
         element = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingElementProxy", name=name)
-        representation = ifcopenshell.api.run("geometry.create_box_representation", f, context=context, x=width, y=depth, z=height)
         ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=[[1,0,0,x],[0,1,0,y],[0,0,1,0],[0,0,0,1]])
-        ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
+        representation = ifcopenshell.api.run("geometry.add_representation", f, product=element, context=body, 
+                                             representation_identifier='Body', representation_type='SweptSolid')
+        
+        # Создаем саму коробку (box)
+        extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
+        rectangle_profile = f.createIfcRectangleProfileDef('AREA', None, width, depth)
+        extrusion = f.createIfcExtrudedAreaSolid(rectangle_profile, extrusion_placement, f.createIfcDirection((0.0, 0.0, 1.0)), height)
+        
+        # Привязываем геометрию к представлению
+        ifcopenshell.api.run("geometry.assign_representation", f, representation=representation, items=[extrusion])
         ifcopenshell.api.run("aggregate.assign_object", f, relating_object=storey, products=[element])
 
     f.write(filename)
@@ -61,13 +69,9 @@ def solve_layout(sheet_url):
     print("2. Расставляем оборудование с помощью OR-Tools...")
     model = cp_model.CpModel()
     
-    positions = {
-        item['name']: {
-            'x': model.NewIntVar(0, int(ROOM_SIZE - item['width']), f"x_{item['name']}"), 
-            'y': model.NewIntVar(0, int(ROOM_SIZE - item['depth']), f"y_{item['name']}")
-        } 
-        for item in equipment_list
-    }
+    positions = {item['name']: {'x': model.NewIntVar(0, int(ROOM_SIZE - item['width']), f"x_{item['name']}"), 
+                                'y': model.NewIntVar(0, int(ROOM_SIZE - item['depth']), f"y_{item['name']}")} 
+                 for item in equipment_list}
     
     intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width']), positions[item['name']]['x'] + int(item['width']), f"ix_{item['name']}") for item in equipment_list]
     intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth']), positions[item['name']]['y'] + int(item['depth']), f"iy_{item['name']}") for item in equipment_list]
