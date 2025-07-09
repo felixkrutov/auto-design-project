@@ -20,7 +20,6 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     print(f"3. Создаем IFC файл '{filename}'...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # --- ИСПРАВЛЕННЫЙ БЛОК СОЗДАНИЯ ЗАГОЛОВКОВ ---
     person = f.createIfcPerson()
     person.FamilyName = "Krutov"
     organization = f.createIfcOrganization()
@@ -31,7 +30,14 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     app_organization.Name = "AI Assistant"
     application = f.createIfcApplication(app_organization, "1.0", "AutoDesign Script", "ADS")
     
-    owner_history = f.createIfcOwnerHistory(person_and_org, application, "ADDED", None, None, None, None, int(time.time()))
+    # --- ИСПРАВЛЕННАЯ СТРОКА ---
+    # Теперь все аргументы на своих местах
+    owner_history = f.createIfcOwnerHistory(
+        OwningUser=person_and_org, 
+        OwningApplication=application, 
+        ChangeAction="ADDED", 
+        CreationDate=int(time.time())
+    )
     # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, "Проект Цеха")
