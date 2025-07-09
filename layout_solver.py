@@ -24,11 +24,15 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     context = ifcopenshell.api.run("context.add_context", f, context_type="Model")
     ifcopenshell.api.run("unit.assign_unit", f, length={"is_metric": True, "raw": "METRE"})
     site = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcSite", name="Участок")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
+    
+    # Вот здесь были ошибки, теперь исправлено: product -> products=[...]
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, products=[site])
+    
     building = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuilding", name="Здание")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, products=[building])
+    
     storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Первый этаж")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[storey])
     
     for item in placements:
         name, x, y, width, depth = item['name'], item['x'], item['y'], item['width'], item['depth']
@@ -37,7 +41,7 @@ def create_ifc_file(placements, filename="prototype.ifc"):
         representation = ifcopenshell.api.run("geometry.create_box_representation", f, context=context, x=width, y=depth, z=height)
         ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=[[1,0,0,x],[0,1,0,y],[0,0,1,0],[0,0,0,1]])
         ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
-        ifcopenshell.api.run("aggregate.assign_object", f, relating_object=storey, product=element)
+        ifcopenshell.api.run("aggregate.assign_object", f, relating_object=storey, products=[element])
 
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
@@ -57,7 +61,6 @@ def solve_layout(sheet_url):
     print("2. Расставляем оборудование с помощью OR-Tools...")
     model = cp_model.CpModel()
     
-    # Вот здесь была ошибка, теперь она исправлена
     positions = {
         item['name']: {
             'x': model.NewIntVar(0, int(ROOM_SIZE - item['width']), f"x_{item['name']}"), 
