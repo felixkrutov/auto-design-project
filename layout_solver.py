@@ -1,11 +1,11 @@
 import pandas as pd
 import ifcopenshell
-import ifcopenshell.api
+import ifcopenshell.guid
+import ifcopenshell.util.placement
 from ortools.sat.python import cp_model
 import sys
 
 def get_rules_from_google_sheet(sheet_url):
-    """Читает правила из опубликованной Google Таблицы."""
     print("1. Читаем правила из Google Таблицы...")
     try:
         csv_export_url = sheet_url.replace('/edit?usp=sharing', '/export?format=csv')
@@ -13,49 +13,53 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > Успешно загружено {len(df)} правил.")
         return df
     except Exception as e:
-        print(f"  > ОШИБКА: Не удалось загрузить правила. Проверь ссылку. {e}")
+        print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
 def create_ifc_file(placements, filename="prototype.ifc"):
-    """Создает IFC файл с размещенным оборудованием."""
     print(f"3. Создаем IFC файл '{filename}'...")
     f = ifcopenshell.file(schema="IFC4")
-    project = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcProject", name="Проект Цеха")
-    context = ifcopenshell.api.run("context.add_context", f, context_type="Model")
-    body = ifcopenshell.api.run("context.add_context", f, context_type="Model",
-                                 context_identifier="Body", target_view="MODEL_VIEW", parent=context)
-    ifcopenshell.api.run("unit.assign_unit", f, length={"is_metric": True, "raw": "METRE"})
-    site = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcSite", name="Участок")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, products=[site])
-    building = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuilding", name="Здание")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, products=[building])
-    storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Первый этаж")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[storey])
     
+    owner_history = f.createIfcOwnerHistory(
+        f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization()),
+        f.createIfcApplication("MyAwesomeApp", "1.0", "My Org")
+    )
+    project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, "Проект Цеха")
+    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    f.createIfcRelAssignsToProject(ifcopenshell.guid.new(), owner_history, [project], None, context)
+    
+    site_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", None, None, site_placement)
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
+    
+    building_placement = f.createIfcLocalPlacement(site_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Здание", None, None, building_placement)
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
+
+    storey_placement = f.createIfcLocalPlacement(building_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж", None, None, storey_placement)
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
+
     for item in placements:
         name, x, y, width, depth = item['name'], item['x'], item['y'], item['width'], item['depth']
         height = 1.5
-        
-        # Создаем элемент и его геометрию (исправлено)
-        element = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingElementProxy", name=name)
-        ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=[[1,0,0,x],[0,1,0,y],[0,0,1,0],[0,0,0,1]])
-        representation = ifcopenshell.api.run("geometry.add_representation", f, product=element, context=body, 
-                                             representation_identifier='Body', representation_type='SweptSolid')
-        
-        # Создаем саму коробку (box)
-        extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-        rectangle_profile = f.createIfcRectangleProfileDef('AREA', None, width, depth)
-        extrusion = f.createIfcExtrudedAreaSolid(rectangle_profile, extrusion_placement, f.createIfcDirection((0.0, 0.0, 1.0)), height)
-        
-        # Привязываем геометрию к представлению
-        ifcopenshell.api.run("geometry.assign_representation", f, representation=representation, items=[extrusion])
-        ifcopenshell.api.run("aggregate.assign_object", f, relating_object=storey, products=[element])
 
+        element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(x), float(y), 0.0))))
+        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, element_placement)
+        
+        profile = f.createIfcRectangleProfileDef('AREA', None, width, depth)
+        direction = f.createIfcDirection((0.0, 0.0, 1.0))
+        solid = f.createIfcExtrudedAreaSolid(profile, None, direction, height)
+        
+        shape_representation = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])
+        element.Representation = f.createIfcProductDefinitionShape(None, None, [shape_representation])
+        
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [element], storey)
+    
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
 
 def solve_layout(sheet_url):
-    """Основная функция: читает правила, решает задачу, создает IFC."""
     rules_df = get_rules_from_google_sheet(sheet_url)
     if rules_df is None: return
 
@@ -88,7 +92,6 @@ def solve_layout(sheet_url):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Ошибка: Укажите URL Google Таблицы как аргумент.")
-        print("Пример: python layout_solver.py 'https://docs.google.com/...'")
     else:
         google_sheet_url = sys.argv[1]
         solve_layout(google_sheet_url)
