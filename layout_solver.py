@@ -1,9 +1,9 @@
 import pandas as pd
 import ifcopenshell
 import ifcopenshell.guid
-import ifcopenshell.util.placement
 from ortools.sat.python import cp_model
 import sys
+import time
 
 def get_rules_from_google_sheet(sheet_url):
     print("1. Читаем правила из Google Таблицы...")
@@ -20,10 +20,20 @@ def create_ifc_file(placements, filename="prototype.ifc"):
     print(f"3. Создаем IFC файл '{filename}'...")
     f = ifcopenshell.file(schema="IFC4")
     
-    owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization()),
-        f.createIfcApplication("MyAwesomeApp", "1.0", "My Org")
-    )
+    # --- ИСПРАВЛЕННЫЙ БЛОК СОЗДАНИЯ ЗАГОЛОВКОВ ---
+    person = f.createIfcPerson()
+    person.FamilyName = "Krutov"
+    organization = f.createIfcOrganization()
+    organization.Name = "AutoDesign Inc."
+    person_and_org = f.createIfcPersonAndOrganization(person, organization)
+    
+    app_organization = f.createIfcOrganization()
+    app_organization.Name = "AI Assistant"
+    application = f.createIfcApplication(app_organization, "1.0", "AutoDesign Script", "ADS")
+    
+    owner_history = f.createIfcOwnerHistory(person_and_org, application, "ADDED", None, None, None, None, int(time.time()))
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
+    
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, "Проект Цеха")
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
     f.createIfcRelAssignsToProject(ifcopenshell.guid.new(), owner_history, [project], None, context)
