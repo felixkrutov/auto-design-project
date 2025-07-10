@@ -1,12 +1,13 @@
 import ifcopenshell
-import ifcopenshell.geom
 import pandas as pd
 import sys
 import math
-import numpy as np
 
 def get_rules_from_google_sheet(sheet_url):
-    print("1. Читаем правила из Google Таблицы для проверки...")
+    """
+    Загружает и парсит правила из общедоступной Google Таблицы.
+    """
+    print("1. Чтение правил из Google Таблицы...")
     try:
         csv_export_url = sheet_url.replace('/edit?usp=sharing', '/export?format=csv')
         df = pd.read_csv(csv_export_url).fillna('')
@@ -16,92 +17,142 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
-def get_placements_from_ifc(ifc_file_path):
-    print(f"2. Анализируем IFC файл '{ifc_file_path}'...")
+def get_absolute_placement(ifc_placement):
+    """
+    Рекурсивно вычисляет абсолютные координаты объекта,
+    проходя по всей вложенной иерархии IfcLocalPlacement.
+    """
+    x, y, z = 0, 0, 0
+    if ifc_placement.PlacementRelTo:
+        # Рекурсивно получаем координаты родительского элемента
+        parent_x, parent_y, parent_z = get_absolute_placement(ifc_placement.PlacementRelTo)
+        x += parent_x
+        y += parent_y
+        z += parent_z
+
+    # Добавляем смещение текущего элемента
+    relative_coords = ifc_placement.RelativePlacement.Location.Coordinates
+    x += relative_coords[0]
+    y += relative_coords[1]
+    z += relative_coords[2]
+    
+    return x, y, z
+
+def extract_placements_from_ifc(ifc_filename):
+    """
+    Извлекает фактическое положение и размеры объектов из IFC файла,
+    напрямую читая данные о размещении (без ifcopenshell.geom).
+    """
+    print(f"2. Анализ IFC файла '{ifc_filename}'...")
     try:
-        ifc_file = ifcopenshell.open(ifc_file_path)
-        placements = {}
-        elements = ifc_file.by_type('IfcBuildingElementProxy')
-        
-        settings = ifcopenshell.geom.settings()
-        # --- САМОЕ ВАЖНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Явно указываем движку, что нам нужны глобальные координаты
-        settings.set(settings.USE_WORLD_COORDS, True)
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-        
-        for element in elements:
-            name = element.Name
-            shape = ifcopenshell.geom.create_shape(settings, element)
-            matrix = np.array(shape.transformation.matrix).reshape((4, 4))
-            coords = matrix[:3, 3]
-            placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
-        
-        print(f"  > Найдено {len(placements)} объектов для проверки.")
-        return placements
+        ifc_file = ifcopenshell.open(ifc_filename)
     except Exception as e:
-        print(f"  > ОШИБКА: Не удалось прочитать или проанализировать IFC файл. {e}")
+        print(f"  > ОШИБКА: Не удалось открыть IFC файл. {e}")
         return None
 
-def validate_model(sheet_url, ifc_file_path):
-    print("\n--- ЗАПУСК AI-ВАЛИДАТОРА ---")
-    rules_df = get_rules_from_google_sheet(sheet_url)
-    placements = get_placements_from_ifc(ifc_file_path)
+    placements = {}
+    elements = ifc_file.by_type("IfcBuildingElementProxy")
     
+    for element in elements:
+        name = element.Name
+        
+        # Извлечение координат через иерархию размещений
+        abs_x, abs_y, _ = get_absolute_placement(element.ObjectPlacement)
+
+        # Извлечение размеров из геометрии
+        width, depth = 0, 0
+        try:
+            shape = element.Representation.Representations[0]
+            solid = shape.Items[0]
+            profile = solid.SweptArea
+            width = profile.XDim
+            depth = profile.YDim
+        except (AttributeError, IndexError):
+            print(f"  > ПРЕДУПРЕЖДЕНИЕ: Не удалось извлечь размеры для '{name}'.")
+            continue
+
+        placements[name] = {
+            'x': abs_x,
+            'y': abs_y,
+            'width': width,
+            'depth': depth
+        }
+        
+    print(f"  > Найдено и обработано {len(placements)} объектов.")
+    return placements
+
+def validate_layout(rules_df, placements):
+    """
+    Проверяет соответствие фактических размещений заданным правилам.
+    """
+    print("3. Запуск проверки правил...")
     if not placements:
-        print("--- ВАЛИДАЦИЯ ПРЕРВАНА: Не удалось извлечь объекты из IFC файла. ---")
+        print("  > ОШИБКА: Нет данных о размещениях для проверки.")
         return
 
-    print("3. Начинаем проверку правил...")
-    all_rules_passed = True
-    TOLERANCE = 1e-6
+    total_rules = len(rules_df)
+    passed_rules = 0
+    
+    for index, rule in rules_df.iterrows():
+        rule_type = rule['Тип правила']
+        obj1_name = rule['Объект1']
+        value = float(rule['Значение'])
 
-    for _, rule in rules_df.iterrows():
-        obj1_name, rule_type, expected_value = rule['Объект1'], rule['Тип правила'], float(rule['Значение'])
-        
         if obj1_name not in placements:
-            print(f"  - [ПРОВАЛ] Объект '{obj1_name}' из правила не найден в IFC файле."); all_rules_passed = False; continue
+            print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj1_name}' из правила не найден в IFC файле.")
+            continue
 
-        obj1_coords = placements[obj1_name]
-        
+        obj1 = placements[obj1_name]
+        check_passed = False
+        actual_value_str = ""
+
         if rule_type == 'Мин. отступ от стены X0':
-            actual_value = obj1_coords['x']
-            if actual_value >= expected_value - TOLERANCE:
-                print(f"  - [OK] '{obj1_name}' отступ от X0: {actual_value:.2f}м >= {expected_value:.2f}м")
-            else:
-                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от X0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
-        
+            check_passed = obj1['x'] >= value
+            actual_value_str = f"факт: {obj1['x']:.2f}м"
+            
         elif rule_type == 'Мин. отступ от стены Y0':
-            actual_value = obj1_coords['y']
-            if actual_value >= expected_value - TOLERANCE:
-                print(f"  - [OK] '{obj1_name}' отступ от Y0: {actual_value:.2f}м >= {expected_value:.2f}м")
-            else:
-                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
+            check_passed = obj1['y'] >= value
+            actual_value_str = f"факт: {obj1['y']:.2f}м"
 
         elif rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in placements:
-                print(f"  - [ПРОВАЛ] Объект '{obj2_name}' из правила не найден."); all_rules_passed = False; continue
+                print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила не найден в IFC файле.")
+                continue
             
-            obj2_coords = placements[obj2_name]
-            dx, dy = obj1_coords['x'] - obj2_coords['x'], obj1_coords['y'] - obj2_coords['y']
-            actual_distance = math.hypot(dx, dy)
+            obj2 = placements[obj2_name]
+            # Расстояние между центрами объектов
+            center1_x, center1_y = obj1['x'] + obj1['width']/2, obj1['y'] + obj1['depth']/2
+            center2_x, center2_y = obj2['x'] + obj2['width']/2, obj2['y'] + obj2['depth']/2
             
-            if actual_distance >= expected_value - TOLERANCE:
-                print(f"  - [OK] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м >= {expected_value:.2f}м")
-            else:
-                print(f"  - [ПРОВАЛ] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
-                
-    print("\n--- ОТЧЕТ ВАЛИДАЦИИ ---")
-    if all_rules_passed: print("✅ Поздравляю! Все правила успешно выполнены. Модель корректна.")
-    else: print("❌ Внимание! В модели найдены отклонения от правил.")
-    print("----------------------")
+            distance = math.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
+            check_passed = distance >= value
+            actual_value_str = f"факт: {distance:.2f}м"
+        
+        else:
+            print(f"  - [НЕИЗВЕСТНО] Правило типа '{rule_type}' не поддерживается валидатором.")
+            continue
+
+        if check_passed:
+            passed_rules += 1
+            print(f"  ✔ [ПРОШЛО] Правило #{index+1}: '{rule_type}' для '{obj1_name}' (>= {value}м). {actual_value_str}")
+        else:
+            print(f"  ❌ [ПРОВАЛ] Правило #{index+1}: '{rule_type}' для '{obj1_name}' (>= {value}м). {actual_value_str}")
+
+    print("\n--- ВАЛИДАЦИЯ ЗАВЕРШЕНА ---")
+    print(f"ИТОГ: Пройдено {passed_rules} из {total_rules} правил.")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python validate_ifc.py <URL> <файл.ifc>\n"); sys.exit(1)
+        print("\nОшибка: Неверное количество аргументов.")
+        print("Пример запуска: python validate_layout.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
+    else:
+        google_sheet_url = sys.argv[1]
+        ifc_file_path = sys.argv[2]
         
-    try: import numpy
-    except ImportError:
-        print("\nОшибка: Библиотека numpy не установлена. Выполните: pip install numpy\n"); sys.exit(1)
-            
-    validate_model(sys.argv[1], sys.argv[2])
+        rules = get_rules_from_google_sheet(google_sheet_url)
+        if rules is not None:
+            placements = extract_placements_from_ifc(ifc_file_path)
+            if placements is not None:
+                validate_layout(rules, placements)
