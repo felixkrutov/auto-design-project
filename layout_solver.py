@@ -7,6 +7,7 @@ import time
 import json
 import math
 
+# ... (функция get_rules_from_google_sheet без изменений) ...
 def get_rules_from_google_sheet(sheet_url):
     print("Чтение правил из Google Таблицы...")
     try:
@@ -19,58 +20,45 @@ def get_rules_from_google_sheet(sheet_url):
         return None
 
 def create_ifc_file(task_data, placements, filename="prototype.ifc"):
-    print("Создание IFC файла...")
+    print("Создание IFC файла (в режиме ДИАГНОСТИКИ)...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # Исправленное создание OwnerHistory
+    # ... (создание owner_history, project, context без изменений) ...
     person = f.createIfcPerson(FamilyName="AI System")
     organization = f.createIfcOrganization(Name="AutoDesign Inc.")
     person_org = f.createIfcPersonAndOrganization(person, organization)
-    
     application_org = f.createIfcOrganization(Name="AI Assistant")
     application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
-    
-    # Создаем OwnerHistory с минимальными параметрами
-    owner_history = f.createIfcOwnerHistory(
-        person_org,
-        application,
-        None,        # ChangeAction
-        None,        # CreationDate
-        None,        # LastModifyingUser
-        None,        # LastModifyingApplication  
-        None         # LastModifiedDate
-    )
-    
+    owner_history = f.createIfcOwnerHistory(person_org, application, None, None, None, None, None)
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
     project.RepresentationContexts = [context]
     
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", ObjectPlacement=f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
-
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
+    # Создаем только минимальную структуру для теста
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Этаж для теста")
 
     for item in placements:
-        element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(item['x']), float(item['y']), 0.0))))
+        # --- ДИАГНОСТИЧЕСКОЕ ИЗМЕНЕНИЕ ---
+        # Размещаем объект не относительно этажа, а напрямую в мире (PlacementRelTo=None)
+        element_placement = f.createIfcLocalPlacement(
+            None, 
+            f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(item['x']), float(item['y']), 0.0)))
+        )
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
         profile = f.createIfcRectangleProfileDef('AREA', None, None, item['width'], item['depth'])
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection((0.0, 0.0, 1.0)), item['height'])
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
         
-        if 'attributes' in item and item['attributes']:
-            prop_values = [f.createIfcPropertySingleValue(k, None, f.createIfcLabel(v), None) for k, v in item['attributes'].items()]
-            prop_set = f.createIfcPropertySet(ifcopenshell.guid.new(), owner_history, "Параметры", None, prop_values)
-            f.createIfcRelDefinesByProperties(ifcopenshell.guid.new(), owner_history, None, None, [element], prop_set)
-        
+        # Логически все еще помещаем в этаж, но геометрически - нет
         f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Content", None, [element], storey)
     
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
 
+# ... (функция solve_layout без изменений) ...
 def solve_layout(sheet_url, task_file_path):
     print("\n--- НАЧАЛО ПРОЦЕССА ПРОЕКТИРОВАНИЯ ---")
     try:
@@ -131,9 +119,5 @@ def solve_layout(sheet_url, task_file_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.")
-        print("Пример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
-    else:
-        google_sheet_url = sys.argv[1]
-        task_json_path = sys.argv[2]
-        solve_layout(google_sheet_url, task_json_path)
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL> <файл.json>\n"); sys.exit(1)
+    solve_layout(sys.argv[1], sys.argv[2])
