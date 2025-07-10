@@ -16,20 +16,16 @@ try:
         print("ОШИБКА: В файле не найдено ни одного объекта IfcBuildingElementProxy.")
         sys.exit()
         
-    # Берем только первый попавшийся объект для чистоты теста
     element = elements[0]
     print(f"2. Выбран тестовый объект: '{element.Name}' (GUID: {element.GlobalId})")
     
-    # Создаем настройки для движка
     settings = ifcopenshell.geom.settings()
     settings.set(settings.USE_WORLD_COORDS, True)
     print("3. Настройки движка установлены (USE_WORLD_COORDS = True).")
     
-    # Пытаемся создать форму и извлечь координаты
     print("4. Вызов ifcopenshell.geom.create_shape...")
     shape = ifcopenshell.geom.create_shape(settings, element)
     
-    # Извлекаем матрицу и координаты
     matrix = np.array(shape.transformation.matrix).reshape((4, 4))
     coords = matrix[:3, 3]
     
@@ -38,7 +34,7 @@ try:
     print(f"  > Извлеченные координаты (X, Y, Z): ({coords[0]:.2f}, {coords[1]:.2f}, {coords[2]:.2f})")
     print("-----------------------\n")
     
-    if coords[0] == 0.0 and coords[1] == 0.0:
+    if abs(coords[0]) < 1e-6 and abs(coords[1]) < 1e-6:
         print("❌ ВЕРДИКТ: ТЕСТ ПРОВАЛЕН. Геометрический движок возвращает нулевые координаты.")
         print("   Это подтверждает, что проблема в библиотеке ifcopenshell, а не в нашем коде.")
     else:
