@@ -64,6 +64,9 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [floor], storey)
 
     # ИСПРАВЛЕННАЯ ЛОГИКА СОЗДАНИЯ СТЕН БЕЗ ПЕРЕСЕЧЕНИЙ
+    # Определяем стены таким образом, чтобы они не накладывались в углах.
+    # Две стены идут по всей длине (ширине w), а две другие - по оставшейся длине (глубине d)
+    # между первыми двумя стенами.
     wall_definitions = [
         # Южная стена (нижняя): идет во всю ширину W
         {'name': 'Стена_Юг', 'x': 0.0, 'y': 0.0, 'len': w, 'wid': wall_thickness},
@@ -119,9 +122,10 @@ def solve_layout(sheet_url, task_file_path):
     room_depth = room_dims['depth']
 
     model = cp_model.CpModel()
-    SCALE = 1000
+    SCALE = 1000 # Масштабирование для работы с целыми числами в OR-Tools
 
     wall_thickness = 0.2
+    # Определяем внутренние границы комнаты, чтобы оборудование не выходило за стены
     min_x = int(wall_thickness * SCALE)
     max_x = int((room_width - wall_thickness) * SCALE)
     min_y = int(wall_thickness * SCALE)
@@ -132,11 +136,14 @@ def solve_layout(sheet_url, task_file_path):
         item_width_scaled = int(item['width'] * SCALE)
         item_depth_scaled = int(item['depth'] * SCALE)
 
+        # Диапазон координат для оборудования должен учитывать его размеры,
+        # чтобы оно не выходило за внутренние границы комнаты.
         positions[item['name']] = {
             'x': model.NewIntVar(min_x, max_x - item_width_scaled, f"x_{item['name']}"),
             'y': model.NewIntVar(min_y, max_y - item_depth_scaled, f"y_{item['name']}")
         }
 
+    # Ограничение "No Overlap" для оборудования
     intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width'] * SCALE), positions[item['name']]['x'] + int(item['width'] * SCALE), f"ix_{item['name']}") for item in equipment_list]
     intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth'] * SCALE), positions[item['name']]['y'] + int(item['depth'] * SCALE), f"iy_{item['name']}") for item in equipment_list]
     model.AddNoOverlap2D(intervals_x, intervals_y)
@@ -144,7 +151,9 @@ def solve_layout(sheet_url, task_file_path):
     print("  > Применение пользовательских правил...")
     for _, rule in rules_df.iterrows():
         obj1_name = rule['Объект1']
-        if obj1_name not in positions: continue
+        if obj1_name not in positions: 
+            print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' из правил не найден в task.json. Пропускаем правило.")
+            continue
 
         rule_type = rule['Тип правила']
         value = float(rule['Значение'])
@@ -152,11 +161,14 @@ def solve_layout(sheet_url, task_file_path):
 
         if rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
-            if obj2_name not in positions: continue
+            if obj2_name not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name}' из правил не найден в task.json. Пропускаем правило.")
+                continue
 
             obj1_data = next(e for e in equipment_list if e['name'] == obj1_name)
             obj2_data = next(e for e in equipment_list if e['name'] == obj2_name)
 
+            # Расстояние между центрами
             center1_x = positions[obj1_name]['x'] + int(obj1_data['width'] * SCALE / 2)
             center1_y = positions[obj1_name]['y'] + int(obj1_data['depth'] * SCALE / 2)
             center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
@@ -167,6 +179,7 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(dx == center1_x - center2_x)
             model.Add(dy == center1_y - center2_y)
 
+            # Используем квадрат расстояния, чтобы избежать sqrt
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
             model.AddMultiplicationEquality(dx2, dx, dx)
@@ -174,10 +187,13 @@ def solve_layout(sheet_url, task_file_path):
 
             dist_sq = value_scaled**2
             model.Add(dx2 + dy2 >= dist_sq)
-            print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
+            print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м (между центрами).")
+        # Здесь можно добавить другие типы правил при необходимости
 
     print("3. Запуск решателя OR-Tools...")
     solver = cp_model.CpSolver()
+    # Установка лимита по времени для больших или сложных задач
+    solver.parameters.max_time_in_seconds = 60.0 
     status = solver.Solve(model)
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -186,11 +202,20 @@ def solve_layout(sheet_url, task_file_path):
                              'x': solver.Value(positions[item['name']]['x']) / SCALE,
                              'y': solver.Value(positions[item['name']]['y']) / SCALE,
                              'width': item['width'], 'depth': item['depth'], 'height': item['height'],
-                             'attributes': item.get('attributes', {})}
+                             'attributes': item.get('attributes', {})} # Добавил .get() для безопасности
                             for item in equipment_list]
         create_ifc_file(task_data, final_placements)
     else:
-        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу.")
+        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
+        if status == cp_model.INFEASIBLE:
+            print("    > Статус решателя: INFEASIBLE (Неразрешимо).")
+        elif status == cp_model.MODEL_INVALID:
+            print("    > Статус решателя: MODEL_INVALID (Модель неверна).")
+        elif status == cp_model.FEASIBLE: # Though it's handled above, a fallback
+            print("    > Статус решателя: FEASIBLE (Найден неоптимальный, но допустимый результат).")
+        elif status == cp_model.UNKNOWN:
+            print("    > Статус решателя: UNKNOWN (Решение не найдено в отведенное время или по другим причинам).")
+
 
     print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
 
