@@ -1,10 +1,6 @@
-Конечно. Вот полный и окончательно исправленный код.
+Вы абсолютно правы. Я прошу прощения за допущенную ошибку — в файл скрипта попал мой сопроводительный текст. Это моя вина.
 
-Причина проблемы оказалась ещё глубже, чем кэширование профилей. Финальный анализ показал, что `IfcAxis2Placement3D` требует, чтобы основной вектор (`Axis`, обычно Z) и вектор направления (`RefDirection`, обычно X) были строго перпендикулярны. В моих предыдущих версиях я по ошибке передавал `None` в качестве `Axis`, полагаясь на значение по умолчанию, что в сочетании с вращением `RefDirection` приводило к некорректной (неортогональной) системе координат.
-
-В этой версии я явно задаю оба вектора для каждой стены, гарантируя, что их системы координат всегда будут математически корректными. Это должно окончательно решить проблему.
-
-### Полный и исправленный код `layout_solver.py`
+Вот **чистый код** без каких-либо комментариев или текста вне самого скрипта. Его можно напрямую сохранить как `layout_solver.py` и запустить.
 
 ```python
 import pandas as pd
@@ -66,7 +62,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     wall_thickness = 0.2
     slab_thickness = 0.2
 
-    # --- Создание Пола ---
     floor_profile = f.createIfcRectangleProfileDef('AREA', 'FloorProfile', None, float(w), float(d))
     floor_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, -slab_thickness])))
     floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(slab_thickness))
@@ -74,7 +69,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     floor = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, "Пол", ObjectPlacement=floor_placement, Representation=floor_shape, PredefinedType='FLOOR')
     f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [floor], storey)
 
-    # --- ФИНАЛЬНАЯ, КОРРЕКТНАЯ ЛОГИКА СОЗДАНИЯ СТЕН ---
     wall_definitions = [
         {'name': 'Стена_Юг', 'start_point': [0.0, 0.0, 0.0], 'length': w, 'angle_deg': 0},
         {'name': 'Стена_Восток', 'start_point': [w, 0.0, 0.0], 'length': d, 'angle_deg': 90},
@@ -86,22 +80,15 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         location_point = f.createIfcCartesianPoint(wall_def['start_point'])
         angle_rad = math.radians(wall_def['angle_deg'])
         
-        # >>>>> КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ <<<<<
-        # Явно задаем ОБА вектора для создания ортогональной (правильной) системы координат.
-        # Axis - это локальная ось Z (направление выдавливания). Всегда вверх.
         axis_direction = f.createIfcDirection([0.0, 0.0, 1.0])
-        # RefDirection - это локальная ось X (направление длины стены).
         ref_direction = f.createIfcDirection([math.cos(angle_rad), math.sin(angle_rad), 0.0])
         
-        # Создаем систему координат, которая ПЕРЕМЕЩАЕТ и ПОВОРАЧИВАЕТ пространство для рисования.
         axis_placement = f.createIfcAxis2Placement3D(location_point, axis_direction, ref_direction)
         wall_placement = f.createIfcLocalPlacement(storey_placement, axis_placement)
 
-        # Даем каждому профилю уникальное имя, чтобы избежать кэширования.
         profile_name = f"WallProfile_{wall_def['name']}"
         profile = f.createIfcRectangleProfileDef('AREA', profile_name, None, float(wall_def['length']), float(wall_thickness))
 
-        # Выдавливаем профиль по его локальной оси Z (которую мы задали как [0,0,1]).
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(h))
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         wall = f.createIfcWall(ifcopenshell.guid.new(), owner_history, wall_def['name'], ObjectPlacement=wall_placement, Representation=shape)
