@@ -25,7 +25,6 @@ def create_ifc_entity(f, entity_class, name, placement, shape, owner_history, st
 
 def create_box_shape(f, context, x, y, z, length, width, height):
     """Создает геометрию в виде параллелепипеда (box) и ее размещение."""
-    # РЕШЕНИЕ: Явно преобразуем все координаты и размеры в float
     placement = f.createIfcLocalPlacement(
         None,
         f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(x), float(y), float(z)]))
@@ -62,7 +61,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
     owner_history = f.createIfcOwnerHistory(person_org, application, None, None, None, None, None)
     
-    # РЕШЕНИЕ: Используем литералы float (0.0) для всех координат
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
     project.RepresentationContexts = [context]
@@ -86,20 +84,20 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     slab_placement, slab_shape = create_box_shape(f, context, 0.0, 0.0, -slab_thickness, w, d, slab_thickness)
     create_ifc_entity(f, "IfcSlab", "Пол", slab_placement, slab_shape, owner_history, storey, "FLOOR")
 
-    # Создаем 4 стены по периметру
-    wall1_p, wall1_s = create_box_shape(f, context, 0.0, 0.0, 0.0, w, wall_thickness, h)
-    create_ifc_entity(f, "IfcWall", "Стена", wall1_p, wall1_s, owner_history, storey)
-    wall2_p, wall2_s = create_box_shape(f, context, w - wall_thickness, 0.0, 0.0, wall_thickness, d, h)
-    create_ifc_entity(f, "IfcWall", "Стена", wall2_p, wall2_s, owner_history, storey)
-    wall3_p, wall3_s = create_box_shape(f, context, 0.0, d - wall_thickness, 0.0, w, wall_thickness, h)
-    create_ifc_entity(f, "IfcWall", "Стена", wall3_p, wall3_s, owner_history, storey)
-    wall4_p, wall4_s = create_box_shape(f, context, 0.0, 0.0, 0.0, wall_thickness, d, h)
-    create_ifc_entity(f, "IfcWall", "Стена", wall4_p, wall4_s, owner_history, storey)
+    # Надежный способ создания стен через цикл
+    wall_definitions = [
+        {'name': 'Стена_Низ', 'x': 0.0, 'y': 0.0, 'len': w, 'wid': wall_thickness},
+        {'name': 'Стена_Право', 'x': w - wall_thickness, 'y': 0.0, 'len': wall_thickness, 'wid': d},
+        {'name': 'Стена_Верх', 'x': 0.0, 'y': d - wall_thickness, 'len': w, 'wid': wall_thickness},
+        {'name': 'Стена_Лево', 'x': 0.0, 'y': 0.0, 'len': wall_thickness, 'wid': d},
+    ]
+    for wall_def in wall_definitions:
+        p, s = create_box_shape(f, context, wall_def['x'], wall_def['y'], 0.0, wall_def['len'], wall_def['wid'], h)
+        create_ifc_entity(f, "IfcWall", wall_def['name'], p, s, owner_history, storey)
     
     # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
     for item in placements:
-        # РЕШЕНИЕ: Явно преобразуем координаты оборудования в float
         element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
         
         profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
@@ -133,14 +131,29 @@ def solve_layout(sheet_url, task_file_path):
 
     print("2. Настройка модели и ограничений...")
     equipment_list = task_data['equipment']
-    room_width = task_data['room_dimensions']['width']
-    room_depth = task_data['room_dimensions']['depth']
+    room_dims = task_data['room_dimensions']
+    room_width = room_dims['width']
+    room_depth = room_dims['depth']
+    
     model = cp_model.CpModel()
     SCALE = 1000
 
-    positions = {item['name']: {'x': model.NewIntVar(0, int((room_width - item['width']) * SCALE), f"x_{item['name']}"), 
-                                'y': model.NewIntVar(0, int((room_depth - item['depth']) * SCALE), f"y_{item['name']}")} 
-                 for item in equipment_list}
+    # Сужаем область для размещения, чтобы оборудование не "врастало" в стены.
+    wall_thickness = 0.2
+    min_x = int(wall_thickness * SCALE)
+    max_x = int((room_width - wall_thickness) * SCALE)
+    min_y = int(wall_thickness * SCALE)
+    max_y = int((room_depth - wall_thickness) * SCALE)
+
+    positions = {}
+    for item in equipment_list:
+        item_width_scaled = int(item['width'] * SCALE)
+        item_depth_scaled = int(item['depth'] * SCALE)
+        
+        positions[item['name']] = {
+            'x': model.NewIntVar(min_x, max_x - item_width_scaled, f"x_{item['name']}"),
+            'y': model.NewIntVar(min_y, max_y - item_depth_scaled, f"y_{item['name']}")
+        }
 
     intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width'] * SCALE), positions[item['name']]['x'] + int(item['width'] * SCALE), f"ix_{item['name']}") for item in equipment_list]
     intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth'] * SCALE), positions[item['name']]['y'] + int(item['depth'] * SCALE), f"iy_{item['name']}") for item in equipment_list]
@@ -156,19 +169,26 @@ def solve_layout(sheet_url, task_file_path):
         value_scaled = int(value * SCALE)
 
         if rule_type == 'Мин. отступ от стены X0':
-            model.Add(positions[obj1_name]['x'] >= value_scaled)
-            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от X0 >= {value}м.")
+            model.Add(positions[obj1_name]['x'] >= min_x + value_scaled)
+            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от стены X0 >= {value}м.")
         elif rule_type == 'Мин. отступ от стены Y0':
-            model.Add(positions[obj1_name]['y'] >= value_scaled)
-            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от Y0 >= {value}м.")
+            model.Add(positions[obj1_name]['y'] >= min_y + value_scaled)
+            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от стены Y0 >= {value}м.")
         elif rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
             
+            # Центр объекта 1
+            center1_x = positions[obj1_name]['x'] + int(next(e for e in equipment_list if e['name'] == obj1_name)['width'] * SCALE / 2)
+            center1_y = positions[obj1_name]['y'] + int(next(e for e in equipment_list if e['name'] == obj1_name)['depth'] * SCALE / 2)
+            # Центр объекта 2
+            center2_x = positions[obj2_name]['x'] + int(next(e for e in equipment_list if e['name'] == obj2_name)['width'] * SCALE / 2)
+            center2_y = positions[obj2_name]['y'] + int(next(e for e in equipment_list if e['name'] == obj2_name)['depth'] * SCALE / 2)
+
             dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
             dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
-            model.Add(dx == positions[obj1_name]['x'] - positions[obj2_name]['x'])
-            model.Add(dy == positions[obj1_name]['y'] - positions[obj2_name]['y'])
+            model.Add(dx == center1_x - center2_x)
+            model.Add(dy == center1_y - center2_y)
             
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
@@ -197,6 +217,7 @@ def solve_layout(sheet_url, task_file_path):
     
     print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
 
+# ИСПРАВЛЕНО: Добавлен недостающий блок для запуска скрипта
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
