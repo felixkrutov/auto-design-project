@@ -1,10 +1,11 @@
 {
-  "project_name": "Тестовый Цех v1.1 - с атрибутами",
+  "project_name": "Тестовый Цех v1.2 - со стенами",
   "building_name": "Основное здание",
   "storey_name": "Первый этаж",
   "room_dimensions": {
     "width": 25.0,
-    "depth": 20.0
+    "depth": 20.0,
+    "height": 4.0
   },
   "equipment": [
     {
