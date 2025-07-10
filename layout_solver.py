@@ -25,7 +25,7 @@ def create_ifc_entity(f, entity_class, name, placement, shape, owner_history, st
 
 def create_box_shape(f, context, x, y, z, length, width, height):
     """Создает геометрию в виде параллелепипеда (box) и ее размещение."""
-    # ИСПРАВЛЕНО: Явно преобразуем все координаты в float
+    # РЕШЕНИЕ: Явно преобразуем все координаты и размеры в float
     placement = f.createIfcLocalPlacement(
         None,
         f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(x), float(y), float(z)]))
@@ -62,7 +62,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
     owner_history = f.createIfcOwnerHistory(person_org, application, None, None, None, None, None)
     
-    # ИСПРАВЛЕНО: Используем литералы float (0.0) для всех координат
+    # РЕШЕНИЕ: Используем литералы float (0.0) для всех координат
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
     project.RepresentationContexts = [context]
@@ -99,7 +99,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
     for item in placements:
-        # ИСПРАВЛЕНО: Явно преобразуем координаты оборудования в float
+        # РЕШЕНИЕ: Явно преобразуем координаты оборудования в float
         element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
         
         profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
@@ -179,4 +179,28 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(dx2 + dy2 >= dist_sq)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
 
-    print("3
+    print("3. Запуск решателя OR-Tools...")
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  > Решение найдено!")
+        final_placements = [{'name': item['name'], 
+                             'x': solver.Value(positions[item['name']]['x']) / SCALE, 
+                             'y': solver.Value(positions[item['name']]['y']) / SCALE, 
+                             'width': item['width'], 'depth': item['depth'], 'height': item['height'], 
+                             'attributes': item.get('attributes', {})} 
+                            for item in equipment_list]
+        create_ifc_file(task_data, final_placements)
+    else:
+        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу.")
+    
+    print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
+    else:
+        google_sheet_url = sys.argv[1]
+        task_json_path = sys.argv[2]
+        solve_layout(google_sheet_url, task_json_path)
