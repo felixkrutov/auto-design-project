@@ -1,0 +1,35 @@
+{
+  "project_name": "Тестовый Цех v1",
+  "building_name": "Основное здание",
+  "storey_name": "Первый этаж",
+  "room_dimensions": {
+    "width": 25.0,
+    "depth": 20.0
+  },
+  "equipment": [
+    {
+      "name": "Станок_ЧПУ",
+      "width": 2.0,
+      "depth": 3.0,
+      "height": 1.8
+    },
+    {
+      "name": "Конвейер",
+      "width": 1.0,
+      "depth": 8.0,
+      "height": 1.0
+    },
+    {
+      "name": "Печь_закалки",
+      "width": 2.5,
+      "depth": 2.5,
+      "height": 2.2
+    },
+    {
+      "name": "Стеллаж_для_сырья",
+      "width": 4.0,
+      "depth": 1.0,
+      "height": 2.5
+    }
+  ]
+}
