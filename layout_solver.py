@@ -7,7 +7,6 @@ import time
 import json
 import math
 
-# --- Функции чтения данных (без изменений) ---
 def get_rules_from_google_sheet(sheet_url):
     print("Чтение правил из Google Таблицы...")
     try:
@@ -23,11 +22,16 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Заменяем "ADDED" на f.createIfcStateEnum('ADDED')
     owner_history = f.createIfcOwnerHistory(
         f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
         f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
-        "ADDED", int(time.time())
+        None, # ChangeAction - оставляем пустым, т.к. State более современный
+        int(time.time())
     )
+    owner_history.State = 'ADDED' # Устанавливаем статус через атрибут, это более надежно
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
@@ -49,12 +53,10 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
         
-        # --- НОВЫЙ БЛОК: СОЗДАНИЕ И ПРИВЯЗКА АТРИБУТОВ ---
         if 'attributes' in item and item['attributes']:
             prop_values = [f.createIfcPropertySingleValue(k, None, f.createIfcLabel(v), None) for k, v in item['attributes'].items()]
             prop_set = f.createIfcPropertySet(ifcopenshell.guid.new(), owner_history, "Параметры", None, prop_values)
             f.createIfcRelDefinesByProperties(ifcopenshell.guid.new(), owner_history, None, None, [element], prop_set)
-        # --- КОНЕЦ НОВОГО БЛОКА ---
         
         f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Content", None, [element], storey)
     
@@ -62,9 +64,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print(f"  > Файл '{filename}' успешно создан!")
 
 def solve_layout(sheet_url, task_file_path):
-    # Эта функция остается без изменений, т.к. она отвечает только за расчет.
-    # Для краткости я ее скрою, но в твоем файле она должна быть целиком.
-    # ... (весь код функции solve_layout из предыдущего шага) ...
     print("\n--- НАЧАЛО ПРОЦЕССА ПРОЕКТИРОВАНИЯ ---")
     try:
         with open(task_file_path, 'r', encoding='utf-8') as f:
