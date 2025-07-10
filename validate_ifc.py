@@ -1,4 +1,5 @@
 import ifcopenshell
+import ifcopenshell.api # <-- Импортируем правильный модуль
 import pandas as pd
 import sys
 import math
@@ -16,19 +17,16 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
-def get_object_placement(ifc_placement):
+def get_object_placement(ifc_placement, ifc_file):
     """Рекурсивно извлекает и преобразует координаты объекта."""
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем базовый случай для остановки рекурсии ---
     if ifc_placement is None:
         return np.identity(4)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     if ifc_placement.is_a('IfcLocalPlacement'):
-        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo)
-        local_matrix = ifcopenshell.util.placement.get_local_placement(ifc_placement.RelativePlacement)
-        return np.dot(parent_matrix, local_matrix)
-    elif ifc_placement.is_a('IfcGridPlacement'):
-        return np.identity(4)
+        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo, ifc_file)
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Используем ifcopenshell.api.placement ---
+        local_matrix = ifcopenshell.api.run("geometry.get_local_placement", ifc_file, placement=ifc_placement.RelativePlacement)
+        return np.dot(parent_matrix, np.array(local_matrix))
     return np.identity(4)
 
 def get_placements_from_ifc(ifc_file_path):
@@ -42,7 +40,7 @@ def get_placements_from_ifc(ifc_file_path):
         for element in elements:
             name = element.Name
             if element.ObjectPlacement:
-                matrix = get_object_placement(element.ObjectPlacement)
+                matrix = get_object_placement(element.ObjectPlacement, ifc_file)
                 coords = matrix[:3, 3]
                 placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
@@ -66,71 +64,54 @@ def validate_model(sheet_url, ifc_file_path):
     all_rules_passed = True
     
     for _, rule in rules_df.iterrows():
-        obj1_name = rule['Объект1']
-        rule_type = rule['Тип правила']
-        expected_value = float(rule['Значение'])
+        obj1_name, rule_type, expected_value = rule['Объект1'], rule['Тип правила'], float(rule['Значение'])
         
         if obj1_name not in placements:
-            print(f"  - [ПРОВАЛ] Объект '{obj1_name}' из правила не найден в IFC файле.")
-            all_rules_passed = False
-            continue
+            print(f"  - [ПРОВАЛ] Объект '{obj1_name}' из правила не найден в IFC файле."); all_rules_passed = False; continue
 
         obj1_coords = placements[obj1_name]
         
         if rule_type == 'Мин. отступ от стены X0':
             actual_value = obj1_coords['x']
-            if actual_value >= expected_value - 1e-6: # Добавляем малый допуск для сравнения float
+            if actual_value >= expected_value - 1e-6:
                 print(f"  - [OK] '{obj1_name}' отступ от X0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
-                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от X0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)")
-                all_rules_passed = False
+                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от X0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
         
         elif rule_type == 'Мин. отступ от стены Y0':
             actual_value = obj1_coords['y']
             if actual_value >= expected_value - 1e-6:
                 print(f"  - [OK] '{obj1_name}' отступ от Y0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
-                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)")
-                all_rules_passed = False
+                print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
 
         elif rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in placements:
-                print(f"  - [ПРОВАЛ] Объект '{obj2_name}' из правила не найден в IFC файле.")
-                all_rules_passed = False
-                continue
+                print(f"  - [ПРОВАЛ] Объект '{obj2_name}' из правила не найден."); all_rules_passed = False; continue
             
             obj2_coords = placements[obj2_name]
-            dx = obj1_coords['x'] - obj2_coords['x']
-            dy = obj1_coords['y'] - obj2_coords['y']
+            dx, dy = obj1_coords['x'] - obj2_coords['x'], obj1_coords['y'] - obj2_coords['y']
             actual_distance = math.hypot(dx, dy)
             
             if actual_distance >= expected_value - 1e-6:
                 print(f"  - [OK] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м >= {expected_value:.2f}м")
             else:
-                print(f"  - [ПРОВАЛ] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м < {expected_value:.2f}м (ОШИБКА)")
-                all_rules_passed = False
+                print(f"  - [ПРОВАЛ] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
                 
     print("\n--- ОТЧЕТ ВАЛИДАЦИИ ---")
-    if all_rules_passed:
-        print("✅ Поздравляю! Все правила успешно выполнены. Модель корректна.")
-    else:
-        print("❌ Внимание! В модели найдены отклонения от правил.")
+    if all_rules_passed: print("✅ Поздравляю! Все правила успешно выполнены. Модель корректна.")
+    else: print("❌ Внимание! В модели найдены отклонения от правил.")
     print("----------------------")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.")
-        print("Пример запуска: python validate_ifc.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
-    else:
-        google_sheet_url = sys.argv[1]
-        ifc_file_path = sys.argv[2]
-        try:
-            import numpy
-        except ImportError:
-            print("\nОшибка: Библиотека numpy не установлена. Пожалуйста, выполните:")
-            print("pip install numpy\n")
-            sys.exit(1)
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python validate_ifc.py <URL> <файл.ifc>\n")
+        sys.exit(1)
+        
+    try: import numpy
+    except ImportError:
+        print("\nОшибка: Библиотека numpy не установлена. Выполните: pip install numpy\n"); sys.exit(1)
             
-        validate_model(google_sheet_url, ifc_file_path)
+    validate_model(sys.argv[1], sys.argv[2])
