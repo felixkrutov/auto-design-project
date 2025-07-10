@@ -222,7 +222,8 @@ def solve_layout(sheet_url, task_file_path):
     room_depth = room_dims['depth']
 
     model = cp_model.CpModel()
-    SCALE = 1000 # Масштабирование для работы с целыми числами в OR-Tools
+    SCALE = 1000  # Масштабирование для работы с целыми числами в OR-Tools
+    ZONE_MARGIN = 1  # 1 мм для строгого исключения из запретных зон
 
     wall_thickness = 0.2
     # Определяем внутренние границы комнаты, чтобы оборудование не выходило за стены
@@ -268,10 +269,11 @@ def solve_layout(sheet_url, task_file_path):
             x_min_s = int(x_min * SCALE)
             y_min_s = int(y_min * SCALE)
             x_max_s = int(x_max * SCALE)
-            y_max_s = int(y_max * SCALE)
+             y_max_s = int(y_max * SCALE)
 
-            # Чтобы исключить касание границы, вводим минимальный
-            # отступ в одну масштабированную единицу (1 мм при SCALE=1000)
+            # Чтобы исключить касание границы, вводим минимальный отступ ZONE_MARGIN
+            # (1 мм при SCALE=1000)
+            ZONE_MARGIN = 1 # Отступ в одну масштабированную единицу (1 мм при SCALE=1000)
 
             zone_safe = obj1_name.replace(' ', '_')
             print(
@@ -280,6 +282,9 @@ def solve_layout(sheet_url, task_file_path):
 
             for item in equipment_list:
                 iname = item['name']
+                if iname == obj1_name:
+                    continue  # пропускаем объект, который определяет зону (если вдруг имя зоны совпало с именем оборудования)
+
                 width_s = int(item['width'] * SCALE)
                 depth_s = int(item['depth'] * SCALE)
 
@@ -289,23 +294,23 @@ def solve_layout(sheet_url, task_file_path):
                 above = model.NewBoolVar(f"{iname}_above_{zone_safe}")
 
                 # Объект строго слева от зоны (без касания)
-                model.Add(positions[iname]['x'] + width_s <= x_min_s - 1).OnlyEnforceIf(left)
-                model.Add(positions[iname]['x'] + width_s > x_min_s - 1).OnlyEnforceIf(left.Not())
+                model.Add(positions[iname]['x'] + width_s <= x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
+                model.Add(positions[iname]['x'] + width_s > x_min_s - ZONE_MARGIN).OnlyEnforceIf(left.Not())
 
                 # Объект строго справа от зоны (без касания)
-                model.Add(positions[iname]['x'] >= x_max_s + 1).OnlyEnforceIf(right)
-                model.Add(positions[iname]['x'] < x_max_s + 1).OnlyEnforceIf(right.Not())
+                model.Add(positions[iname]['x'] >= x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
+                model.Add(positions[iname]['x'] < x_max_s + ZONE_MARGIN).OnlyEnforceIf(right.Not())
 
                 # Объект строго ниже зоны (без касания)
-                model.Add(positions[iname]['y'] + depth_s <= y_min_s - 1).OnlyEnforceIf(below)
-                model.Add(positions[iname]['y'] + depth_s > y_min_s - 1).OnlyEnforceIf(below.Not())
+                model.Add(positions[iname]['y'] + depth_s <= y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
+                model.Add(positions[iname]['y'] + depth_s > y_min_s - ZONE_MARGIN).OnlyEnforceIf(below.Not())
 
                 # Объект строго выше зоны (без касания)
-                model.Add(positions[iname]['y'] >= y_max_s + 1).OnlyEnforceIf(above)
-                model.Add(positions[iname]['y'] < y_max_s + 1).OnlyEnforceIf(above.Not())
+                model.Add(positions[iname]['y'] >= y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
+                model.Add(positions[iname]['y'] < y_max_s + ZONE_MARGIN).OnlyEnforceIf(above.Not())
 
-                # Необходимо выполнение хотя бы одного условия - объект не может пересекать зону
-                model.Add(left + right + below + above >= 1)
+                # хотя бы одно из условий должно выполниться
+                model.AddBoolOr([left, right, below, above])
             continue
 
         if obj1_name not in positions:
