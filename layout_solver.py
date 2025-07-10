@@ -26,7 +26,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     """Создает IFC файл с оборудованием, полом и стенами."""
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
-    
+
     # 1. Основные сущности и иерархия
     owner_history = f.createIfcOwnerHistory(
         OwningUser=f.createIfcPersonAndOrganization(
@@ -38,20 +38,20 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         ),
         State='READWRITE', ChangeAction='ADDED', CreationDate=int(time.time())
     )
-    
+
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
-    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, 
+    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5,
                                                         f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
     project.RepresentationContexts = [context]
-    
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", 
-                           ObjectPlacement=f.createIfcLocalPlacement(None, 
+
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок",
+                           ObjectPlacement=f.createIfcLocalPlacement(None,
                                                                     f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], 
-                                   ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, 
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'],
+                                   ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement,
                                                                              f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], 
-                                     ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, 
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'],
+                                     ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement,
                                                                                f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
     storey_placement = storey.ObjectPlacement # Это базовое размещение для всех элементов внутри этажа
 
@@ -92,14 +92,14 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     for wall_def in wall_definitions:
         wall_len = float(wall_def['len'])
         wall_wid = float(wall_def['wid'])
-        
+
         # Смещаем точку вставки на половину размеров стены, чтобы она начиналась от (x,y)
         placement_x = float(wall_def['x']) + wall_len / 2
         placement_y = float(wall_def['y']) + wall_wid / 2
-        
-        placement = f.createIfcLocalPlacement(storey_placement, 
+
+        placement = f.createIfcLocalPlacement(storey_placement,
                                              f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([placement_x, placement_y, 0.0])))
-        
+
         profile = f.createIfcRectangleProfileDef('AREA', None, None, wall_len, wall_wid)
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), h)
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
@@ -269,7 +269,7 @@ def solve_layout(sheet_url, task_file_path):
             x_min_s = int(x_min * SCALE)
             y_min_s = int(y_min * SCALE)
             x_max_s = int(x_max * SCALE)
-             y_max_s = int(y_max * SCALE)
+            y_max_s = int(y_max * SCALE)
 
             # Чтобы исключить касание границы, вводим минимальный отступ ZONE_MARGIN
             # (1 мм при SCALE=1000)
