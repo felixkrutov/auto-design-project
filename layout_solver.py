@@ -22,14 +22,12 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # --- ИСПРАВЛЕНИЕ №1: Используем перечисление (enum) вместо строки "ADDED" ---
     owner_history = f.createIfcOwnerHistory(
         f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
         f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
-        "ADDED", # Оставляем как есть, ifcopenshell > 0.7.0 должен это поддерживать. Проверим, была ли проблема в другом.
+        "ADDED",
         int(time.time())
     )
-    # Если ошибка повторится, заменим "ADDED" на f.createIfcStateEnum('ADDED'), но сначала проверим другую гипотезу
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
@@ -81,8 +79,6 @@ def solve_layout(sheet_url, task_file_path):
     
     model = cp_model.CpModel()
     
-    # --- ИСПРАВЛЕНИЕ №2: Умножаем на 1000, чтобы работать с целыми числами ---
-    # Это стандартный прием в целочисленных решателях: переводим метры в миллиметры
     SCALE = 1000
     
     positions = {item['name']: {'x': model.NewIntVar(0, int((room_width - item['width']) * SCALE), f"x_{item['name']}"), 
@@ -95,10 +91,12 @@ def solve_layout(sheet_url, task_file_path):
 
     print("  > Применение пользовательских правил...")
     for _, rule in rules_df.iterrows():
-        obj1_name, rule_type, value = rule['Объект1'], rule['Тип правила'], float(rule['Значение']) # Используем float()
-        value_scaled = int(value * SCALE)
-
+        obj1_name = rule['Объект1']
         if obj1_name not in positions: continue
+
+        rule_type = rule['Тип правила']
+        value = float(rule['Значение'])
+        value_scaled = int(value * SCALE)
 
         if rule_type == 'Мин. отступ от стены X0':
             model.Add(positions[obj1_name]['x'] >= value_scaled)
@@ -110,13 +108,24 @@ def solve_layout(sheet_url, task_file_path):
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
             
+            # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            # Создаем переменные для разницы координат
             dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
             dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
             model.Add(dx == positions[obj1_name]['x'] - positions[obj2_name]['x'])
             model.Add(dy == positions[obj1_name]['y'] - positions[obj2_name]['y'])
-            
+
+            # Создаем переменные для квадратов разниц
+            dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
+            dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
+            model.AddMultiplicationEquality(dx2, [dx, dx])
+            model.AddMultiplicationEquality(dy2, [dy, dy])
+
+            # Теперь добавляем линейное ограничение
             dist_sq = value_scaled**2
-            model.Add(dx*dx + dy*dy >= dist_sq)
+            model.Add(dx2 + dy2 >= dist_sq)
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+            
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
 
     print("3. Запуск решателя OR-Tools...")
@@ -128,8 +137,8 @@ def solve_layout(sheet_url, task_file_path):
         final_placements = [
             {
                 'name': item['name'], 
-                'x': solver.Value(positions[item['name']]['x']) / SCALE, # Обратно делим на 1000
-                'y': solver.Value(positions[item['name']]['y']) / SCALE, # Обратно делим на 1000
+                'x': solver.Value(positions[item['name']]['x']) / SCALE,
+                'y': solver.Value(positions[item['name']]['y']) / SCALE,
                 'width': item['width'], 
                 'depth': item['depth'],
                 'height': item['height']
