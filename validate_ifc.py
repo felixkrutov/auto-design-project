@@ -22,16 +22,17 @@ def get_placements_from_ifc(ifc_file_path):
         ifc_file = ifcopenshell.open(ifc_file_path)
         placements = {}
         elements = ifc_file.by_type('IfcBuildingElementProxy')
+        
         settings = ifcopenshell.geom.settings()
+        # --- САМОЕ ВАЖНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Явно указываем движку, что нам нужны глобальные координаты
+        settings.set(settings.USE_WORLD_COORDS, True)
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
         
         for element in elements:
             name = element.Name
             shape = ifcopenshell.geom.create_shape(settings, element)
-            
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Убираем лишнее .data ---
             matrix = np.array(shape.transformation.matrix).reshape((4, 4))
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
             coords = matrix[:3, 3]
             placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
