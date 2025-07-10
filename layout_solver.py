@@ -193,7 +193,8 @@ def solve_layout(sheet_url, task_file_path):
             continue
 
         rule_type = rule['Тип правила']
-        value = float(rule['Значение'])
+        value_str = str(rule['Значение']).strip()
+        value = float(value_str) if value_str else 0.0
         value_scaled = int(value * SCALE)
 
         if rule_type == 'Мин. расстояние до':
@@ -227,6 +228,27 @@ def solve_layout(sheet_url, task_file_path):
             dist_sq_scaled = value_scaled**2
             model.Add(dx2 + dy2 >= dist_sq_scaled)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м (между центрами).")
+        elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
+            obj2_name = rule['Объект2']
+            if obj2_name not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name}' из правил не найден в task.json. Пропускаем правило.")
+                continue
+
+            obj1_data = next(e for e in equipment_list if e['name'] == obj1_name)
+            obj2_data = next(e for e in equipment_list if e['name'] == obj2_name)
+
+            center1_x = positions[obj1_name]['x'] + int(obj1_data['width'] * SCALE / 2)
+            center1_y = positions[obj1_name]['y'] + int(obj1_data['depth'] * SCALE / 2)
+            center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
+            center2_y = positions[obj2_name]['y'] + int(obj2_data['depth'] * SCALE / 2)
+
+            if rule_type == 'Выровнять по оси X':
+                model.Add(center1_x == center2_x)
+                axis = 'X'
+            else:
+                model.Add(center1_y == center2_y)
+                axis = 'Y'
+            print(f"    - ПРАВИЛО: Выровнять '{obj1_name}' и '{obj2_name}' по оси {axis}.")
         # Здесь можно добавить другие типы правил при необходимости
 
     print("3. Запуск решателя OR-Tools...")
