@@ -16,15 +16,18 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
-# --- НОВЫЙ, УЛУЧШЕННЫЙ БЛОК ИЗВЛЕЧЕНИЯ КООРДИНАТ ---
 def get_object_placement(ifc_placement):
     """Рекурсивно извлекает и преобразует координаты объекта."""
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем базовый случай для остановки рекурсии ---
+    if ifc_placement is None:
+        return np.identity(4)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    
     if ifc_placement.is_a('IfcLocalPlacement'):
         parent_matrix = get_object_placement(ifc_placement.PlacementRelTo)
         local_matrix = ifcopenshell.util.placement.get_local_placement(ifc_placement.RelativePlacement)
         return np.dot(parent_matrix, local_matrix)
     elif ifc_placement.is_a('IfcGridPlacement'):
-        # Обработка размещения по сетке (пока пропустим)
         return np.identity(4)
     return np.identity(4)
 
@@ -39,9 +42,7 @@ def get_placements_from_ifc(ifc_file_path):
         for element in elements:
             name = element.Name
             if element.ObjectPlacement:
-                # Получаем матрицу трансформации
                 matrix = get_object_placement(element.ObjectPlacement)
-                # Координаты находятся в последнем столбце матрицы
                 coords = matrix[:3, 3]
                 placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
@@ -50,7 +51,6 @@ def get_placements_from_ifc(ifc_file_path):
     except Exception as e:
         print(f"  > ОШИБКА: Не удалось прочитать или проанализировать IFC файл. {e}")
         return None
-# --- КОНЕЦ НОВОГО БЛОКА ---
 
 def validate_model(sheet_url, ifc_file_path):
     """Главная функция-валидатор."""
@@ -79,7 +79,7 @@ def validate_model(sheet_url, ifc_file_path):
         
         if rule_type == 'Мин. отступ от стены X0':
             actual_value = obj1_coords['x']
-            if actual_value >= expected_value:
+            if actual_value >= expected_value - 1e-6: # Добавляем малый допуск для сравнения float
                 print(f"  - [OK] '{obj1_name}' отступ от X0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от X0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)")
@@ -87,7 +87,7 @@ def validate_model(sheet_url, ifc_file_path):
         
         elif rule_type == 'Мин. отступ от стены Y0':
             actual_value = obj1_coords['y']
-            if actual_value >= expected_value:
+            if actual_value >= expected_value - 1e-6:
                 print(f"  - [OK] '{obj1_name}' отступ от Y0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)")
@@ -105,7 +105,7 @@ def validate_model(sheet_url, ifc_file_path):
             dy = obj1_coords['y'] - obj2_coords['y']
             actual_distance = math.hypot(dx, dy)
             
-            if actual_distance >= expected_value:
+            if actual_distance >= expected_value - 1e-6:
                 print(f"  - [OK] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м < {expected_value:.2f}м (ОШИБКА)")
@@ -126,7 +126,6 @@ if __name__ == "__main__":
     else:
         google_sheet_url = sys.argv[1]
         ifc_file_path = sys.argv[2]
-        # Проверяем, установлена ли библиотека numpy
         try:
             import numpy
         except ImportError:
