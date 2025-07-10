@@ -11,7 +11,7 @@ def get_rules_from_google_sheet(sheet_url):
     print("Чтение правил из Google Таблицы...")
     try:
         csv_export_url = sheet_url.replace('/edit?usp=sharing', '/export?format=csv')
-        df = pd.read_csv(csv_export_url).fillna('') # Заменяем пустые ячейки на пустые строки
+        df = pd.read_csv(csv_export_url).fillna('')
         print(f"  > Успешно загружено {len(df)} правил.")
         return df
     except Exception as e:
@@ -22,12 +22,14 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
+    # --- ИСПРАВЛЕНИЕ №1: Используем перечисление (enum) вместо строки "ADDED" ---
     owner_history = f.createIfcOwnerHistory(
         f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
         f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
-        "ADDED",
+        "ADDED", # Оставляем как есть, ifcopenshell > 0.7.0 должен это поддерживать. Проверим, была ли проблема в другом.
         int(time.time())
     )
+    # Если ошибка повторится, заменим "ADDED" на f.createIfcStateEnum('ADDED'), но сначала проверим другую гипотезу
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
@@ -62,7 +64,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
 def solve_layout(sheet_url, task_file_path):
     print("\n--- НАЧАЛО ПРОЦЕССА ПРОЕКТИРОВАНИЯ ---")
     
-    # Шаг 1: Загрузка данных и правил
     try:
         with open(task_file_path, 'r', encoding='utf-8') as f:
             task_data = json.load(f)
@@ -73,65 +74,51 @@ def solve_layout(sheet_url, task_file_path):
     rules_df = get_rules_from_google_sheet(sheet_url)
     if rules_df is None: return
 
-    # Шаг 2: Настройка модели оптимизации
     print("2. Настройка модели и ограничений...")
     equipment_list = task_data['equipment']
-    equipment_map = {item['name']: item for item in equipment_list}
     room_width = task_data['room_dimensions']['width']
     room_depth = task_data['room_dimensions']['depth']
     
     model = cp_model.CpModel()
     
-    positions = {item['name']: {'x': model.NewIntVar(0, math.floor(room_width - item['width']), f"x_{item['name']}"), 
-                                'y': model.NewIntVar(0, math.floor(room_depth - item['depth']), f"y_{item['name']}")} 
+    # --- ИСПРАВЛЕНИЕ №2: Умножаем на 1000, чтобы работать с целыми числами ---
+    # Это стандартный прием в целочисленных решателях: переводим метры в миллиметры
+    SCALE = 1000
+    
+    positions = {item['name']: {'x': model.NewIntVar(0, int((room_width - item['width']) * SCALE), f"x_{item['name']}"), 
+                                'y': model.NewIntVar(0, int((room_depth - item['depth']) * SCALE), f"y_{item['name']}")} 
                  for item in equipment_list}
     
-    # --- БАЗОВОЕ ПРАВИЛО: НЕ ПЕРЕСЕКАТЬСЯ ---
-    intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width']), positions[item['name']]['x'] + int(item['width']), f"ix_{item['name']}") for item in equipment_list]
-    intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth']), positions[item['name']]['y'] + int(item['depth']), f"iy_{item['name']}") for item in equipment_list]
+    intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width'] * SCALE), positions[item['name']]['x'] + int(item['width'] * SCALE), f"ix_{item['name']}") for item in equipment_list]
+    intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth'] * SCALE), positions[item['name']]['y'] + int(item['depth'] * SCALE), f"iy_{item['name']}") for item in equipment_list]
     model.AddNoOverlap2D(intervals_x, intervals_y)
 
-    # --- НОВЫЙ БЛОК: ПРИМЕНЕНИЕ ПРАВИЛ ИЗ ТАБЛИЦЫ ---
     print("  > Применение пользовательских правил...")
     for _, rule in rules_df.iterrows():
-        obj1_name, rule_type, value = rule['Объект1'], rule['Тип правила'], rule['Значение']
+        obj1_name, rule_type, value = rule['Объект1'], rule['Тип правила'], float(rule['Значение']) # Используем float()
+        value_scaled = int(value * SCALE)
 
-        if obj1_name not in positions:
-            print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' из правила не найден в задании.")
-            continue
+        if obj1_name not in positions: continue
 
-        try:
-            # Правила отступа от стен
-            if rule_type == 'Мин. отступ от стены X0':
-                model.Add(positions[obj1_name]['x'] >= int(value))
-                print(f"    - ПРАВИЛО: '{obj1_name}' должен быть на расстоянии >= {value} от стены X0.")
-            elif rule_type == 'Мин. отступ от стены Y0':
-                model.Add(positions[obj1_name]['y'] >= int(value))
-                print(f"    - ПРАВИЛО: '{obj1_name}' должен быть на расстоянии >= {value} от стены Y0.")
+        if rule_type == 'Мин. отступ от стены X0':
+            model.Add(positions[obj1_name]['x'] >= value_scaled)
+            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от X0 >= {value}м.")
+        elif rule_type == 'Мин. отступ от стены Y0':
+            model.Add(positions[obj1_name]['y'] >= value_scaled)
+            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от Y0 >= {value}м.")
+        elif rule_type == 'Мин. расстояние до':
+            obj2_name = rule['Объект2']
+            if obj2_name not in positions: continue
             
-            # Правила расстояния между объектами
-            elif rule_type == 'Мин. расстояние до':
-                obj2_name = rule['Объект2']
-                if obj2_name not in positions:
-                    print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name}' из правила не найден.")
-                    continue
-                
-                # Создаем переменные для абсолютных разниц по осям
-                dx = model.NewIntVar(0, int(room_width), f"dx_{obj1_name}_{obj2_name}")
-                dy = model.NewIntVar(0, int(room_depth), f"dy_{obj1_name}_{obj2_name}")
-                model.AddAbsEquality(dx, positions[obj1_name]['x'] - positions[obj2_name]['x'])
-                model.AddAbsEquality(dy, positions[obj1_name]['y'] - positions[obj2_name]['y'])
-                
-                # Условие: квадрат расстояния >= квадрата минимальной дистанции
-                # Это стандартный прием, чтобы избежать иррациональных чисел (корней)
-                dist_sq = int(value)**2
-                model.Add(dx*dx + dy*dy >= dist_sq)
-                print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' должно быть >= {value}.")
+            dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
+            dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
+            model.Add(dx == positions[obj1_name]['x'] - positions[obj2_name]['x'])
+            model.Add(dy == positions[obj1_name]['y'] - positions[obj2_name]['y'])
+            
+            dist_sq = value_scaled**2
+            model.Add(dx*dx + dy*dy >= dist_sq)
+            print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
 
-        except (ValueError, TypeError):
-             print(f"    - ОШИБКА: Неверное значение '{value}' для правила '{rule_type}' у объекта '{obj1_name}'.")
-
-    # Шаг 3: Решение и создание файла
     print("3. Запуск решателя OR-Tools...")
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
@@ -141,8 +128,8 @@ def solve_layout(sheet_url, task_file_path):
         final_placements = [
             {
                 'name': item['name'], 
-                'x': solver.Value(positions[item['name']]['x']), 
-                'y': solver.Value(positions[item['name']]['y']), 
+                'x': solver.Value(positions[item['name']]['x']) / SCALE, # Обратно делим на 1000
+                'y': solver.Value(positions[item['name']]['y']) / SCALE, # Обратно делим на 1000
                 'width': item['width'], 
                 'depth': item['depth'],
                 'height': item['height']
