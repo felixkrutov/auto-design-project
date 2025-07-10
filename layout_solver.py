@@ -5,35 +5,6 @@ from ortools.sat.python import cp_model
 import sys
 import json
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СОЗДАНИЯ КОНСТРУКЦИЙ ---
-
-def create_ifc_entity(f, entity_class, name, placement, shape, owner_history, storey, predefined_type=None):
-    """Универсальная функция для создания IFC сущностей (Стена, Плита)."""
-    args = {
-        "GlobalId": ifcopenshell.guid.new(),
-        "OwnerHistory": owner_history,
-        "Name": name,
-        "ObjectPlacement": placement,
-        "Representation": shape,
-    }
-    if predefined_type:
-        args["PredefinedType"] = predefined_type
-        
-    entity = f.create_entity(entity_class, **args)
-    f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Content", None, [entity], storey)
-    return entity
-
-def create_box_shape(f, context, x, y, z, length, width, height):
-    """Создает геометрию в виде параллелепипеда (box) и ее размещение."""
-    placement = f.createIfcLocalPlacement(
-        None,
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(x), float(y), float(z)]))
-    )
-    profile = f.createIfcRectangleProfileDef('AREA', None, None, float(length), float(width))
-    solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(height))
-    shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
-    return placement, shape
-
 # --- ОСНОВНЫЕ ФУНКЦИИ ---
 
 def get_rules_from_google_sheet(sheet_url):
@@ -68,40 +39,46 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", ObjectPlacement=f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
+    storey_placement = storey.ObjectPlacement
 
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
 
-    # --- ДОБАВЛЕНИЕ ПОЛА И СТЕН ---
+    # --- ДОБАВЛЕНИЕ ПОЛА И СТЕН (ЯВНЫЙ И КОРРЕКТНЫЙ МЕТОД) ---
     print("  > Создание строительных конструкций (пол и стены)...")
     room_dims = task_data['room_dimensions']
     w, d, h = room_dims['width'], room_dims['depth'], room_dims['height']
     wall_thickness = 0.2
     slab_thickness = 0.2
 
-    # Создаем пол
-    slab_placement, slab_shape = create_box_shape(f, context, 0.0, 0.0, -slab_thickness, w, d, slab_thickness)
-    create_ifc_entity(f, "IfcSlab", "Пол", slab_placement, slab_shape, owner_history, storey, "FLOOR")
+    # Создаем Пол
+    floor_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, -slab_thickness])))
+    floor_profile = f.createIfcRectangleProfileDef('AREA', None, None, float(w), float(d))
+    floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(slab_thickness))
+    floor_shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [floor_solid])])
+    floor = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, "Пол", ObjectPlacement=floor_placement, Representation=floor_shape, PredefinedType='FLOOR')
+    f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "FloorContainer", None, [floor], storey)
 
-    # ИСПРАВЛЕНО: Явное и корректное определение каждой из 4-х стен.
-    # Стена 1 (Низ)
-    p1, s1 = create_box_shape(f, context, 0.0, 0.0, 0.0, w, wall_thickness, h)
-    create_ifc_entity(f, "IfcWall", "Стена_Низ", p1, s1, owner_history, storey)
-    # Стена 2 (Право)
-    p2, s2 = create_box_shape(f, context, w - wall_thickness, 0.0, 0.0, wall_thickness, d, h)
-    create_ifc_entity(f, "IfcWall", "Стена_Право", p2, s2, owner_history, storey)
-    # Стена 3 (Верх)
-    p3, s3 = create_box_shape(f, context, 0.0, d - wall_thickness, 0.0, w, wall_thickness, h)
-    create_ifc_entity(f, "IfcWall", "Стена_Верх", p3, s3, owner_history, storey)
-    # Стена 4 (Лево)
-    p4, s4 = create_box_shape(f, context, 0.0, 0.0, 0.0, wall_thickness, d, h)
-    create_ifc_entity(f, "IfcWall", "Стена_Лево", p4, s4, owner_history, storey)
-    
+    # Создаем Стены
+    wall_definitions = [
+        {'name': 'Стена_Низ', 'x': 0.0, 'y': 0.0, 'len': w, 'wid': wall_thickness},
+        {'name': 'Стена_Право', 'x': w - wall_thickness, 'y': 0.0, 'len': wall_thickness, 'wid': d},
+        {'name': 'Стена_Верх', 'x': 0.0, 'y': d - wall_thickness, 'len': w, 'wid': wall_thickness},
+        {'name': 'Стена_Лево', 'x': 0.0, 'y': 0.0, 'len': wall_thickness, 'wid': d},
+    ]
+    for wall_def in wall_definitions:
+        placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(wall_def['x']), float(wall_def['y']), 0.0])))
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, float(wall_def['len']), float(wall_def['wid']))
+        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(h))
+        shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
+        wall = f.createIfcWall(ifcopenshell.guid.new(), owner_history, wall_def['name'], ObjectPlacement=placement, Representation=shape)
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "WallContainer", None, [wall], storey)
+
     # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
     for item in placements:
-        element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
+        element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
         
         profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(item['height']))
@@ -180,7 +157,6 @@ def solve_layout(sheet_url, task_file_path):
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
             
-            # ИСПРАВЛЕНО: Корректный расчет расстояния между центрами объектов
             obj1_data = next(e for e in equipment_list if e['name'] == obj1_name)
             obj2_data = next(e for e in equipment_list if e['name'] == obj2_name)
             
@@ -189,10 +165,10 @@ def solve_layout(sheet_url, task_file_path):
             center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
             center2_y = positions[obj2_name]['y'] + int(obj2_data['depth'] * SCALE / 2)
 
-            dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
-            dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
+            dx = model.NewIntVar(-int(room_width * SCALE), int(room_depth * SCALE), f"dx_{obj1_name}_{obj2_name}")
+            dy = model.NewIntVar(-int(room_width * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
             model.Add(dx == center1_x - center2_x)
-            model.Add(dy == center1_y - center2_y) # Эта строка была ошибочной, теперь исправлена
+            model.Add(dy == center1_y - center2_y)
             
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
