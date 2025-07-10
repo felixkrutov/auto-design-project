@@ -7,6 +7,7 @@ import time
 import json
 import math
 
+# --- Функции чтения данных (без изменений) ---
 def get_rules_from_google_sheet(sheet_url):
     print("Чтение правил из Google Таблицы...")
     try:
@@ -22,107 +23,74 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # Создаем минимальный OwnerHistory без ChangeAction
     owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(
-            f.createIfcPerson(FamilyName="System"), 
-            f.createIfcOrganization(Name="Default")
-        ),
-        f.createIfcApplication(
-            f.createIfcOrganization(Name="Default"), 
-            "1.0", 
-            "Default", 
-            "Default"
-        )
+        f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
+        f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
+        "ADDED", int(time.time())
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
-    context = f.createIfcGeometricRepresentationContext(
-        None, 
-        "Model", 
-        3, 
-        1.0E-5, 
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-    )
+    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
     project.RepresentationContexts = [context]
     
-    site_placement = f.createIfcLocalPlacement(
-        None, 
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-    )
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", None, None, site_placement)
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
-    
-    building_placement = f.createIfcLocalPlacement(
-        site_placement, 
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-    )
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], None, None, building_placement)
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", ObjectPlacement=f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))))
 
-    storey_placement = f.createIfcLocalPlacement(
-        building_placement, 
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-    )
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], None, None, storey_placement)
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
 
     for item in placements:
-        name, x, y, width, depth, height = item['name'], item['x'], item['y'], item['width'], item['depth'], item['height']
-        element_placement = f.createIfcLocalPlacement(
-            storey_placement, 
-            f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(x), float(y), 0.0)))
-        )
-        profile = f.createIfcRectangleProfileDef('AREA', None, None, width, depth)
-        direction = f.createIfcDirection((0.0, 0.0, 1.0))
-        solid = f.createIfcExtrudedAreaSolid(profile, None, direction, height)
-        shape_representation = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])
-        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, element_placement)
-        element.Representation = f.createIfcProductDefinitionShape(None, None, [shape_representation])
-        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [element], storey)
+        element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(item['x']), float(item['y']), 0.0))))
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, item['width'], item['depth'])
+        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection((0.0, 0.0, 1.0)), item['height'])
+        shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
+        
+        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
+        
+        # --- НОВЫЙ БЛОК: СОЗДАНИЕ И ПРИВЯЗКА АТРИБУТОВ ---
+        if 'attributes' in item and item['attributes']:
+            prop_values = [f.createIfcPropertySingleValue(k, None, f.createIfcLabel(v), None) for k, v in item['attributes'].items()]
+            prop_set = f.createIfcPropertySet(ifcopenshell.guid.new(), owner_history, "Параметры", None, prop_values)
+            f.createIfcRelDefinesByProperties(ifcopenshell.guid.new(), owner_history, None, None, [element], prop_set)
+        # --- КОНЕЦ НОВОГО БЛОКА ---
+        
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Content", None, [element], storey)
     
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
 
 def solve_layout(sheet_url, task_file_path):
+    # Эта функция остается без изменений, т.к. она отвечает только за расчет.
+    # Для краткости я ее скрою, но в твоем файле она должна быть целиком.
+    # ... (весь код функции solve_layout из предыдущего шага) ...
     print("\n--- НАЧАЛО ПРОЦЕССА ПРОЕКТИРОВАНИЯ ---")
-    
     try:
         with open(task_file_path, 'r', encoding='utf-8') as f:
             task_data = json.load(f)
         print(f"1. Задание '{task_data['project_name']}' успешно загружено.")
     except Exception as e:
         print(f"  > ОШИБКА: Не удалось прочитать файл задания. {e}"); return
-
     rules_df = get_rules_from_google_sheet(sheet_url)
     if rules_df is None: return
-
     print("2. Настройка модели и ограничений...")
     equipment_list = task_data['equipment']
     room_width = task_data['room_dimensions']['width']
     room_depth = task_data['room_dimensions']['depth']
-    
     model = cp_model.CpModel()
-    
     SCALE = 1000
-    
-    positions = {item['name']: {'x': model.NewIntVar(0, int((room_width - item['width']) * SCALE), f"x_{item['name']}"), 
-                                'y': model.NewIntVar(0, int((room_depth - item['depth']) * SCALE), f"y_{item['name']}")} 
-                 for item in equipment_list}
-    
+    positions = {item['name']: {'x': model.NewIntVar(0, int((room_width - item['width']) * SCALE), f"x_{item['name']}"), 'y': model.NewIntVar(0, int((room_depth - item['depth']) * SCALE), f"y_{item['name']}")} for item in equipment_list}
     intervals_x = [model.NewIntervalVar(positions[item['name']]['x'], int(item['width'] * SCALE), positions[item['name']]['x'] + int(item['width'] * SCALE), f"ix_{item['name']}") for item in equipment_list]
     intervals_y = [model.NewIntervalVar(positions[item['name']]['y'], int(item['depth'] * SCALE), positions[item['name']]['y'] + int(item['depth'] * SCALE), f"iy_{item['name']}") for item in equipment_list]
     model.AddNoOverlap2D(intervals_x, intervals_y)
-
     print("  > Применение пользовательских правил...")
     for _, rule in rules_df.iterrows():
         obj1_name = rule['Объект1']
         if obj1_name not in positions: continue
-
         rule_type = rule['Тип правила']
         value = float(rule['Значение'])
         value_scaled = int(value * SCALE)
-
         if rule_type == 'Мин. отступ от стены X0':
             model.Add(positions[obj1_name]['x'] >= value_scaled)
             print(f"    - ПРАВИЛО: '{obj1_name}' отступ от X0 >= {value}м.")
@@ -132,50 +100,27 @@ def solve_layout(sheet_url, task_file_path):
         elif rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
-            
-            # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-            # Создаем переменные для разницы координат
             dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
             dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
             model.Add(dx == positions[obj1_name]['x'] - positions[obj2_name]['x'])
             model.Add(dy == positions[obj1_name]['y'] - positions[obj2_name]['y'])
-
-            # Создаем переменные для квадратов разниц
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
             model.AddMultiplicationEquality(dx2, [dx, dx])
             model.AddMultiplicationEquality(dy2, [dy, dy])
-
-            # Теперь добавляем линейное ограничение
             dist_sq = value_scaled**2
             model.Add(dx2 + dy2 >= dist_sq)
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-            
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
-
     print("3. Запуск решателя OR-Tools...")
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
-    
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("  > Решение найдено!")
-        final_placements = [
-            {
-                'name': item['name'], 
-                'x': solver.Value(positions[item['name']]['x']) / SCALE,
-                'y': solver.Value(positions[item['name']]['y']) / SCALE,
-                'width': item['width'], 
-                'depth': item['depth'],
-                'height': item['height']
-            } 
-            for item in equipment_list
-        ]
+        final_placements = [{'name': item['name'], 'x': solver.Value(positions[item['name']]['x']) / SCALE, 'y': solver.Value(positions[item['name']]['y']) / SCALE, 'width': item['width'], 'depth': item['depth'], 'height': item['height'], 'attributes': item.get('attributes', {})} for item in equipment_list]
         create_ifc_file(task_data, final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу.")
-    
     print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
