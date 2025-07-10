@@ -8,14 +8,14 @@
     "height": 8.0
   },
   "equipment": [
-    { "name": "Силос_муки_1", "width": 3.0, "depth": 3.0, "height": 7.5, "attributes": {"Тип": "Хранение сырья", "Объем": "50 м³"} },
-    { "name": "Силос_муки_2", "width": 3.0, "depth": 3.0, "height": 7.5, "attributes": {"Тип": "Хранение сырья", "Объем": "50 м³"} },
-    { "name": "Станция_просеивания", "width": 2.0, "depth": 2.0, "height": 3.0, "attributes": {"Назначение": "Подготовка муки"} },
-    { "name": "Пресс_экструдер", "width": 2.5, "depth": 8.0, "height": 2.5, "attributes": {"Производительность": "1500 кг/ч", "Тип": "Вакуумный"} },
-    { "name": "Камера_предв_сушки", "width": 3.0, "depth": 12.0, "height": 3.5, "attributes": {"Температура": "50-60 °C", "Назначение": "Трабатто"} },
-    { "name": "Основная_сушилка", "width": 4.0, "depth": 15.0, "height": 4.0, "attributes": {"Цикл": "8 часов", "Влажность на выходе": "12%"} },
-    { "name": "Охладитель", "width": 3.0, "depth": 10.0, "height": 3.5, "attributes": {"Назначение": "Стабилизация продукта"} },
-    { "name": "Бункер_готовой_продукции", "width": 4.0, "depth": 4.0, "height": 5.0, "attributes": {"Объем": "30 м³"} },
-    { "name": "Упаковочная_линия", "width": 2.0, "depth": 9.0, "height": 2.0, "attributes": {"Скорость": "120 пачек/мин"} }
+    { "name": "Силос_муки_1", "width": 3.0, "depth": 3.0, "height": 7.5, "attributes": {"Тип": "Хранение сырья", "Объем": "50 м³"}, "model_path": "models/silo.ifc" },
+    { "name": "Силос_муки_2", "width": 3.0, "depth": 3.0, "height": 7.5, "attributes": {"Тип": "Хранение сырья", "Объем": "50 м³"}, "model_path": "models/silo.ifc" },
+    { "name": "Станция_просеивания", "width": 2.0, "depth": 2.0, "height": 3.0, "attributes": {"Назначение": "Подготовка муки"}, "model_path": "models/sieve.ifc" },
+    { "name": "Пресс_экструдер", "width": 2.5, "depth": 8.0, "height": 2.5, "attributes": {"Производительность": "1500 кг/ч", "Тип": "Вакуумный"}, "model_path": "models/extruder.ifc" },
+    { "name": "Камера_предв_сушки", "width": 3.0, "depth": 12.0, "height": 3.5, "attributes": {"Температура": "50-60 °C", "Назначение": "Трабатто"}, "model_path": "models/pre_dryer.ifc" },
+    { "name": "Основная_сушилка", "width": 4.0, "depth": 15.0, "height": 4.0, "attributes": {"Цикл": "8 часов", "Влажность на выходе": "12%"}, "model_path": "models/dryer.ifc" },
+    { "name": "Охладитель", "width": 3.0, "depth": 10.0, "height": 3.5, "attributes": {"Назначение": "Стабилизация продукта"}, "model_path": "models/cooler.ifc" },
+    { "name": "Бункер_готовой_продукции", "width": 4.0, "depth": 4.0, "height": 5.0, "attributes": {"Объем": "30 м³"}, "model_path": "models/storage.ifc" },
+    { "name": "Упаковочная_линия", "width": 2.0, "depth": 9.0, "height": 2.0, "attributes": {"Скорость": "120 пачек/мин"}, "model_path": "models/packing.ifc" }
   ]
 }
