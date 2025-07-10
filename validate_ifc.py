@@ -96,15 +96,41 @@ def validate_layout(rules_df, placements):
     for index, rule in rules_df.iterrows():
         rule_type = rule['Тип правила']
         obj1_name = rule['Объект1']
-        value = float(rule['Значение'])
+        value_str = str(rule['Значение']).strip()
 
-        if obj1_name not in placements:
+        # Для правил, связанных с конкретным объектом, проверяем его наличие
+        if rule_type != 'Запретная зона' and obj1_name not in placements:
             print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj1_name}' из правила не найден в IFC файле.")
             continue
 
-        obj1 = placements[obj1_name]
         check_passed = False
         actual_value_str = ""
+
+        if rule_type == 'Запретная зона':
+            try:
+                zone_xmin, zone_ymin, zone_xmax, zone_ymax = map(float, value_str.split(','))
+            except Exception:
+                print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение запретной зоны '{obj1_name}'. Ожидается 'Xmin,Ymin,Xmax,Ymax'.")
+                continue
+
+            violation_found = False
+            for obj_name, obj in placements.items():
+                obj_xmin, obj_ymin = obj['x'], obj['y']
+                obj_xmax = obj_xmin + obj['width']
+                obj_ymax = obj_ymin + obj['depth']
+
+                if (obj_xmin < zone_xmax and obj_xmax > zone_xmin and
+                        obj_ymin < zone_ymax and obj_ymax > zone_ymin):
+                    print(f"  ❌ [ПРОВАЛ] Правило #{index+1}: Объект '{obj_name}' пересекает запретную зону '{obj1_name}'.")
+                    violation_found = True
+
+            if not violation_found:
+                passed_rules += 1
+                print(f"  ✔ [ПРОШЛО] Правило #{index+1}: Запретная зона '{obj1_name}' свободна.")
+            continue
+
+        obj1 = placements[obj1_name]
+        value = float(value_str) if value_str else 0.0
 
         if rule_type == 'Мин. отступ от стены X0':
             check_passed = obj1['x'] >= value
