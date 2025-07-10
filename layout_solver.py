@@ -271,7 +271,8 @@ def solve_layout(sheet_url, task_file_path):
             x_max_s = int(x_max * SCALE)
             y_max_s = int(y_max * SCALE)
 
-            # Небольшой отступ (ZONE_MARGIN), чтобы оборудование не касалось границ зоны
+            # Чтобы исключить касание границы, вводим минимальный
+            # отступ ZONE_MARGIN (1 мм при SCALE=1000)
 
             zone_safe = obj1_name.replace(' ', '_')
             print(
