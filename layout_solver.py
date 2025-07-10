@@ -22,32 +22,59 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
+    # Исправление: используем "NOCHANGE" вместо "ADDED"
     owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
-        f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
-        "ADDED",
+        f.createIfcPersonAndOrganization(
+            f.createIfcPerson(FamilyName="AI System"), 
+            f.createIfcOrganization(Name="AutoDesign Inc.")
+        ),
+        f.createIfcApplication(
+            f.createIfcOrganization(Name="AI Assistant"), 
+            "1.0", 
+            "AutoDesign Solver", 
+            "ADS"
+        ),
+        "NOCHANGE",  # Исправлено: было "ADDED"
         int(time.time())
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
-    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    context = f.createIfcGeometricRepresentationContext(
+        None, 
+        "Model", 
+        3, 
+        1.0E-5, 
+        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
+    )
     project.RepresentationContexts = [context]
     
-    site_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    site_placement = f.createIfcLocalPlacement(
+        None, 
+        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
+    )
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", None, None, site_placement)
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
     
-    building_placement = f.createIfcLocalPlacement(site_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    building_placement = f.createIfcLocalPlacement(
+        site_placement, 
+        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
+    )
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], None, None, building_placement)
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
 
-    storey_placement = f.createIfcLocalPlacement(building_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
+    storey_placement = f.createIfcLocalPlacement(
+        building_placement, 
+        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
+    )
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], None, None, storey_placement)
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
 
     for item in placements:
         name, x, y, width, depth, height = item['name'], item['x'], item['y'], item['width'], item['depth'], item['height']
-        element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(x), float(y), 0.0))))
+        element_placement = f.createIfcLocalPlacement(
+            storey_placement, 
+            f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((float(x), float(y), 0.0)))
+        )
         profile = f.createIfcRectangleProfileDef('AREA', None, None, width, depth)
         direction = f.createIfcDirection((0.0, 0.0, 1.0))
         solid = f.createIfcExtrudedAreaSolid(profile, None, direction, height)
