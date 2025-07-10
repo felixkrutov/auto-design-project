@@ -6,8 +6,6 @@ import sys
 import json
 import time
 
-# --- ФИНАЛЬНЫЙ ИСПРАВЛЕННЫЙ КОД ---
-
 def get_rules_from_google_sheet(sheet_url):
     """Загружает правила из Google Таблицы."""
     print("Чтение правил из Google Таблицы...")
@@ -25,7 +23,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # ИСПРАВЛЕНО: Корректный вызов IfcOwnerHistory с именованными аргументами
     owner_history = f.createIfcOwnerHistory(
         OwningUser=f.createIfcPersonAndOrganization(
             f.createIfcPerson(FamilyName="AI System"),
@@ -34,9 +31,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         OwningApplication=f.createIfcApplication(
             f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"
         ),
-        State='READWRITE',
-        ChangeAction='ADDED',
-        CreationDate=int(time.time())
+        State='READWRITE', ChangeAction='ADDED', CreationDate=int(time.time())
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
@@ -52,7 +47,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
 
-    # --- ДОБАВЛЕНИЕ ПОЛА И СТЕН (ЯВНЫЙ И КОРРЕКТНЫЙ МЕТОД) ---
     print("  > Создание строительных конструкций (пол и стены)...")
     room_dims = task_data['room_dimensions']
     w, d, h = room_dims['width'], room_dims['depth'], room_dims['height']
@@ -82,15 +76,12 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         wall = f.createIfcWall(ifcopenshell.guid.new(), owner_history, wall_def['name'], ObjectPlacement=placement, Representation=shape)
         f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [wall], storey)
 
-    # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
     for item in placements:
         element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
-        
         profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(item['height']))
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
-        
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
         
         if 'attributes' in item and item['attributes']:
@@ -104,7 +95,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print(f"  > Файл '{filename}' успешно создан!")
 
 def solve_layout(sheet_url, task_file_path):
-    """Основная функция: читает данные, решает задачу и создает IFC."""
     print("\n--- НАЧАЛО ПРОЦЕССА ПРОЕКТИРОВАНИЯ ---")
     try:
         with open(task_file_path, 'r', encoding='utf-8') as f:
@@ -154,13 +144,7 @@ def solve_layout(sheet_url, task_file_path):
         value = float(rule['Значение'])
         value_scaled = int(value * SCALE)
 
-        if rule_type == 'Мин. отступ от стены X0':
-            model.Add(positions[obj1_name]['x'] >= min_x + value_scaled)
-            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от стены X0 >= {value}м.")
-        elif rule_type == 'Мин. отступ от стены Y0':
-            model.Add(positions[obj1_name]['y'] >= min_y + value_scaled)
-            print(f"    - ПРАВИЛО: '{obj1_name}' отступ от стены Y0 >= {value}м.")
-        elif rule_type == 'Мин. расстояние до':
+        if rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
             
