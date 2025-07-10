@@ -6,12 +6,13 @@ import sys
 import json
 import time
 
-### ФИНАЛЬНЫЙ КОД, РЕШАЮЩИЙ ПРОБЛЕМУ ПЕРЕСЕЧЕНИЯ УГЛОВ ###
+### ФИНАЛЬНЫЙ КОД, РЕШАЮЩИЙ ПРОБЛЕМУ ПЕРЕСЕЧЕНИЯ УГЛОВ (ГЕОМЕТРИЯ) ###
 
 def get_rules_from_google_sheet(sheet_url):
     """Загружает правила из Google Таблицы."""
     print("Чтение правил из Google Таблицы...")
     try:
+        # Убедимся, что URL корректен для экспорта CSV
         csv_export_url = sheet_url.replace('/edit?usp=sharing', '/export?format=csv')
         df = pd.read_csv(csv_export_url).fillna('')
         print(f"  > Успешно загружено {len(df)} правил.")
@@ -25,6 +26,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
+    # 1. Основные сущности и иерархия
     owner_history = f.createIfcOwnerHistory(
         OwningUser=f.createIfcPersonAndOrganization(
             f.createIfcPerson(FamilyName="AI System"),
@@ -37,13 +39,20 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
-    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
+    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, 
+                                                        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
     project.RepresentationContexts = [context]
     
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", ObjectPlacement=f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
-    storey_placement = storey.ObjectPlacement
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", 
+                           ObjectPlacement=f.createIfcLocalPlacement(None, 
+                                                                    f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, task_data['building_name'], 
+                                   ObjectPlacement=f.createIfcLocalPlacement(site.ObjectPlacement, 
+                                                                             f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], 
+                                     ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, 
+                                                                               f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
+    storey_placement = storey.ObjectPlacement # Это базовое размещение для всех элементов внутри этажа
 
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
@@ -51,46 +60,72 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
 
     print("  > Создание строительных конструкций (пол и стены)...")
     room_dims = task_data['room_dimensions']
-    w, d, h = room_dims['width'], room_dims['depth'], room_dims['height']
+    w, d, h = float(room_dims['width']), float(room_dims['depth']), float(room_dims['height'])
     wall_thickness = 0.2
     slab_thickness = 0.2
 
-    # Создаем Пол
-    floor_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, -slab_thickness])))
-    floor_profile = f.createIfcRectangleProfileDef('AREA', None, None, float(w), float(d))
-    floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(slab_thickness))
+    # 2. Создаем Пол
+    # Пол должен быть расположен под 0.0 уровнем этажа, поэтому Z-координата отрицательная
+    floor_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([w/2, d/2, -slab_thickness])))
+    floor_profile = f.createIfcRectangleProfileDef('AREA', None, None, w, d) # Профиль пола
+    floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), slab_thickness)
     floor_shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [floor_solid])])
     floor = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, "Пол", ObjectPlacement=floor_placement, Representation=floor_shape, PredefinedType='FLOOR')
     f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [floor], storey)
 
-    # ИСПРАВЛЕННАЯ ЛОГИКА СОЗДАНИЯ СТЕН БЕЗ ПЕРЕСЕЧЕНИЙ
-    # Определяем стены таким образом, чтобы они не накладывались в углах.
-    # Две стены идут по всей длине (ширине w), а две другие - по оставшейся длине (глубине d)
-    # между первыми двумя стенами.
+    # 3. Создаем Стены
+    # Важно: IfcRectangleProfileDef создает прямоугольник, центрированный в (0,0) своей локальной системы координат.
+    # Поэтому, чтобы x,y в wall_def['x'], wall_def['y'] соответствовали нижней левой точке стены,
+    # необходимо сместить точку вставки на половину длины и ширины стены.
     wall_definitions = [
-        # Южная стена (нижняя): идет во всю ширину W
+        # Южная стена: от (0,0) до (w, wall_thickness)
         {'name': 'Стена_Юг', 'x': 0.0, 'y': 0.0, 'len': w, 'wid': wall_thickness},
-        # Северная стена (верхняя): идет во всю ширину W
+        # Северная стена: от (0, d-wall_thickness) до (w, d)
         {'name': 'Стена_Север', 'x': 0.0, 'y': d - wall_thickness, 'len': w, 'wid': wall_thickness},
-        # Западная стена (левая): вставляется МЕЖДУ северной и южной
+        # Западная стена: от (0, wall_thickness) до (wall_thickness, d - wall_thickness)
         {'name': 'Стена_Запад', 'x': 0.0, 'y': wall_thickness, 'len': wall_thickness, 'wid': d - (2 * wall_thickness)},
-        # Восточная стена (правая): вставляется МЕЖДУ северной и южной
+        # Восточная стена: от (w-wall_thickness, wall_thickness) до (w, d - wall_thickness)
         {'name': 'Стена_Восток', 'x': w - wall_thickness, 'y': wall_thickness, 'len': wall_thickness, 'wid': d - (2 * wall_thickness)},
     ]
+
     for wall_def in wall_definitions:
-        placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(wall_def['x']), float(wall_def['y']), 0.0])))
-        profile = f.createIfcRectangleProfileDef('AREA', None, None, float(wall_def['len']), float(wall_def['wid']))
-        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(h))
+        wall_len = float(wall_def['len'])
+        wall_wid = float(wall_def['wid'])
+        
+        # Смещаем точку вставки на половину размеров стены, чтобы она начиналась от (x,y)
+        placement_x = float(wall_def['x']) + wall_len / 2
+        placement_y = float(wall_def['y']) + wall_wid / 2
+        
+        placement = f.createIfcLocalPlacement(storey_placement, 
+                                             f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([placement_x, placement_y, 0.0])))
+        
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, wall_len, wall_wid)
+        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), h)
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         wall = f.createIfcWall(ifcopenshell.guid.new(), owner_history, wall_def['name'], ObjectPlacement=placement, Representation=shape)
         f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [wall], storey)
 
+    # 4. Размещение оборудования
     print("  > Размещение оборудования...")
     for item in placements:
-        element_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
-        profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
-        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(item['height']))
+        item_width = float(item['width'])
+        item_depth = float(item['depth'])
+        item_height = float(item['height'])
+
+        # Аналогично стенам, смещаем точку вставки оборудования
+        # x, y из решателя OR-Tools - это minX, minY оборудования.
+        # Чтобы центрированный профиль начался с этой точки, смещаем его центр.
+        element_placement_x = float(item['x']) + item_width / 2
+        element_placement_y = float(item['y']) + item_depth / 2
+
+        element_placement = f.createIfcLocalPlacement(storey_placement, 
+                                                       f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([element_placement_x, element_placement_y, 0.0])))
+        
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, item_width, item_depth)
+        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), item_height)
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
+        
+        # Используем IfcBuildingElementProxy для общего оборудования
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
 
         if 'attributes' in item and item['attributes']:
@@ -126,21 +161,23 @@ def solve_layout(sheet_url, task_file_path):
 
     wall_thickness = 0.2
     # Определяем внутренние границы комнаты, чтобы оборудование не выходило за стены
-    min_x = int(wall_thickness * SCALE)
-    max_x = int((room_width - wall_thickness) * SCALE)
-    min_y = int(wall_thickness * SCALE)
-    max_y = int((room_depth - wall_thickness) * SCALE)
+    # Эти границы - это внутренние края помещения, куда может быть помещен minX,minY оборудования
+    min_x_room_inner = int(wall_thickness * SCALE)
+    max_x_room_inner = int((room_width - wall_thickness) * SCALE)
+    min_y_room_inner = int(wall_thickness * SCALE)
+    max_y_room_inner = int((room_depth - wall_thickness) * SCALE)
 
     positions = {}
     for item in equipment_list:
+        item_name = item['name']
         item_width_scaled = int(item['width'] * SCALE)
         item_depth_scaled = int(item['depth'] * SCALE)
 
         # Диапазон координат для оборудования должен учитывать его размеры,
-        # чтобы оно не выходило за внутренние границы комнаты.
-        positions[item['name']] = {
-            'x': model.NewIntVar(min_x, max_x - item_width_scaled, f"x_{item['name']}"),
-            'y': model.NewIntVar(min_y, max_y - item_depth_scaled, f"y_{item['name']}")
+        # чтобы оно не выходило за внутренние стены.
+        positions[item_name] = {
+            'x': model.NewIntVar(min_x_room_inner, max_x_room_inner - item_width_scaled, f"x_{item_name}"),
+            'y': model.NewIntVar(min_y_room_inner, max_y_room_inner - item_depth_scaled, f"y_{item_name}")
         }
 
     # Ограничение "No Overlap" для оборудования
@@ -169,6 +206,8 @@ def solve_layout(sheet_url, task_file_path):
             obj2_data = next(e for e in equipment_list if e['name'] == obj2_name)
 
             # Расстояние между центрами
+            # Координаты из решателя (positions[obj_name]['x']) - это minX,minY.
+            # Для нахождения центра нужно добавить половину размера.
             center1_x = positions[obj1_name]['x'] + int(obj1_data['width'] * SCALE / 2)
             center1_y = positions[obj1_name]['y'] + int(obj1_data['depth'] * SCALE / 2)
             center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
@@ -179,14 +218,14 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(dx == center1_x - center2_x)
             model.Add(dy == center1_y - center2_y)
 
-            # Используем квадрат расстояния, чтобы избежать sqrt
+            # Используем квадрат расстояния, чтобы избежать sqrt (оптимизация для решателя)
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
             model.AddMultiplicationEquality(dx2, dx, dx)
             model.AddMultiplicationEquality(dy2, dy, dy)
 
-            dist_sq = value_scaled**2
-            model.Add(dx2 + dy2 >= dist_sq)
+            dist_sq_scaled = value_scaled**2
+            model.Add(dx2 + dy2 >= dist_sq_scaled)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м (между центрами).")
         # Здесь можно добавить другие типы правил при необходимости
 
@@ -202,20 +241,19 @@ def solve_layout(sheet_url, task_file_path):
                              'x': solver.Value(positions[item['name']]['x']) / SCALE,
                              'y': solver.Value(positions[item['name']]['y']) / SCALE,
                              'width': item['width'], 'depth': item['depth'], 'height': item['height'],
-                             'attributes': item.get('attributes', {})} # Добавил .get() для безопасности
+                             'attributes': item.get('attributes', {})} 
                             for item in equipment_list]
         create_ifc_file(task_data, final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
         if status == cp_model.INFEASIBLE:
-            print("    > Статус решателя: INFEASIBLE (Неразрешимо).")
+            print("    > Статус решателя: INFEASIBLE (Неразрешимо). Правила противоречат друг другу или нет места.")
         elif status == cp_model.MODEL_INVALID:
-            print("    > Статус решателя: MODEL_INVALID (Модель неверна).")
-        elif status == cp_model.FEASIBLE: # Though it's handled above, a fallback
-            print("    > Статус решателя: FEASIBLE (Найден неоптимальный, но допустимый результат).")
+            print("    > Статус решателя: MODEL_INVALID (Модель неверна). Внутренняя ошибка модели CP-SAT.")
         elif status == cp_model.UNKNOWN:
-            print("    > Статус решателя: UNKNOWN (Решение не найдено в отведенное время или по другим причинам).")
-
+            print("    > Статус решателя: UNKNOWN (Решение не найдено в отведенное время, или возникла другая проблема).")
+        else:
+            print(f"    > Неизвестный статус решателя: {solver.StatusName(status)}")
 
     print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
 
