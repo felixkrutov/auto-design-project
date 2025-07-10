@@ -1,5 +1,5 @@
 import ifcopenshell
-import ifcopenshell.geom  # <-- ИМПОРТИРУЕМ ГЕОМЕТРИЧЕСКИЙ ДВИЖОК
+import ifcopenshell.geom
 import pandas as pd
 import sys
 import math
@@ -17,25 +17,21 @@ def get_rules_from_google_sheet(sheet_url):
         return None
 
 def get_placements_from_ifc(ifc_file_path):
-    """Извлекает имена и глобальные координаты объектов, используя геометрический движок."""
     print(f"2. Анализируем IFC файл '{ifc_file_path}'...")
     try:
         ifc_file = ifcopenshell.open(ifc_file_path)
         placements = {}
         elements = ifc_file.by_type('IfcBuildingElementProxy')
-        
-        # Создаем настройки для геометрического движка
         settings = ifcopenshell.geom.settings()
         
         for element in elements:
             name = element.Name
-            # --- ИСПОЛЬЗУЕМ МОЩЬ БИБЛИОТЕКИ ---
-            # Эта функция сама распутывает все вложенности и возвращает готовую форму
             shape = ifcopenshell.geom.create_shape(settings, element)
             
-            # Матрица трансформации содержит всю информацию о положении и повороте
-            matrix = np.array(shape.transformation.matrix.data).reshape((4, 4))
-            # Глобальные координаты (X, Y, Z) - это последний столбец матрицы
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Убираем лишнее .data ---
+            matrix = np.array(shape.transformation.matrix).reshape((4, 4))
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
             coords = matrix[:3, 3]
             placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
@@ -56,7 +52,8 @@ def validate_model(sheet_url, ifc_file_path):
 
     print("3. Начинаем проверку правил...")
     all_rules_passed = True
-    
+    TOLERANCE = 1e-6
+
     for _, rule in rules_df.iterrows():
         obj1_name, rule_type, expected_value = rule['Объект1'], rule['Тип правила'], float(rule['Значение'])
         
@@ -65,9 +62,6 @@ def validate_model(sheet_url, ifc_file_path):
 
         obj1_coords = placements[obj1_name]
         
-        # Сравнение с допуском для чисел с плавающей точкой
-        TOLERANCE = 1e-6 
-
         if rule_type == 'Мин. отступ от стены X0':
             actual_value = obj1_coords['x']
             if actual_value >= expected_value - TOLERANCE:
