@@ -1,12 +1,11 @@
 import ifcopenshell
-import ifcopenshell.api # <-- Импортируем правильный модуль
+import ifcopenshell.util.placement # <-- Возвращаемся к старому, надежному модулю
 import pandas as pd
 import sys
 import math
 import numpy as np
 
 def get_rules_from_google_sheet(sheet_url):
-    """Читает правила из Google Таблицы."""
     print("1. Читаем правила из Google Таблицы для проверки...")
     try:
         csv_export_url = sheet_url.replace('/edit?usp=sharing', '/export?format=csv')
@@ -17,20 +16,18 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
-def get_object_placement(ifc_placement, ifc_file):
+def get_object_placement(ifc_placement):
     """Рекурсивно извлекает и преобразует координаты объекта."""
     if ifc_placement is None:
         return np.identity(4)
-    
     if ifc_placement.is_a('IfcLocalPlacement'):
-        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo, ifc_file)
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Используем ifcopenshell.api.placement ---
-        local_matrix = ifcopenshell.api.run("geometry.get_local_placement", ifc_file, placement=ifc_placement.RelativePlacement)
-        return np.dot(parent_matrix, np.array(local_matrix))
+        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo)
+        # --- ИСПРАВЛЕНИЕ: Используем СТАРЫЙ, но ПРАВИЛЬНЫЙ синтаксис ---
+        local_matrix = ifcopenshell.util.placement.get_local_placement(ifc_placement.RelativePlacement)
+        return np.dot(parent_matrix, local_matrix)
     return np.identity(4)
 
 def get_placements_from_ifc(ifc_file_path):
-    """Извлекает имена и глобальные координаты объектов из IFC файла."""
     print(f"2. Анализируем IFC файл '{ifc_file_path}'...")
     try:
         ifc_file = ifcopenshell.open(ifc_file_path)
@@ -40,7 +37,7 @@ def get_placements_from_ifc(ifc_file_path):
         for element in elements:
             name = element.Name
             if element.ObjectPlacement:
-                matrix = get_object_placement(element.ObjectPlacement, ifc_file)
+                matrix = get_object_placement(element.ObjectPlacement)
                 coords = matrix[:3, 3]
                 placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
@@ -51,13 +48,12 @@ def get_placements_from_ifc(ifc_file_path):
         return None
 
 def validate_model(sheet_url, ifc_file_path):
-    """Главная функция-валидатор."""
     print("\n--- ЗАПУСК AI-ВАЛИДАТОРА ---")
     rules_df = get_rules_from_google_sheet(sheet_url)
     placements = get_placements_from_ifc(ifc_file_path)
     
-    if rules_df is None or placements is None:
-        print("--- ВАЛИДАЦИЯ ПРЕРВАНА ИЗ-ЗА ОШИБОК ---")
+    if rules_df is None or placements is None or not placements:
+        print("--- ВАЛИДАЦИЯ ПРЕРВАНА ИЗ-ЗА ОШИБОК ИЛИ ОТСУТСТВИЯ ОБЪЕКТОВ ---")
         return
 
     print("3. Начинаем проверку правил...")
@@ -107,8 +103,7 @@ def validate_model(sheet_url, ifc_file_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python validate_ifc.py <URL> <файл.ifc>\n")
-        sys.exit(1)
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python validate_ifc.py <URL> <файл.ifc>\n"); sys.exit(1)
         
     try: import numpy
     except ImportError:
