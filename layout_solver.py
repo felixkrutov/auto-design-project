@@ -34,7 +34,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     owner_history = f.createIfcOwnerHistory(
         person_org,
         application,
-        "NOCHANGE",  # ChangeAction - валидное значение из IfcChangeActionEnum
+        None,        # ChangeAction - оставляем пустым
         None,        # CreationDate - можно оставить пустым
         None,        # LastModifyingUser
         None,        # LastModifyingApplication  
