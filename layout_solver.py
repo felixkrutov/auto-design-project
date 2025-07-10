@@ -4,6 +4,7 @@ import ifcopenshell.guid
 from ortools.sat.python import cp_model
 import sys
 import json
+import time
 
 # --- ФИНАЛЬНЫЙ ИСПРАВЛЕННЫЙ КОД ---
 
@@ -24,16 +25,18 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # Стандартный заголовок и иерархия проекта
+    # ИСПРАВЛЕНО: Корректный вызов IfcOwnerHistory с именованными аргументами
     owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(
+        OwningUser=f.createIfcPersonAndOrganization(
             f.createIfcPerson(FamilyName="AI System"),
             f.createIfcOrganization(Name="AutoDesign Inc.")
         ),
-        f.createIfcApplication(
+        OwningApplication=f.createIfcApplication(
             f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"
         ),
-        'ADDED', None, None, None, int(pd.Timestamp.now().timestamp())
+        State='READWRITE',
+        ChangeAction='ADDED',
+        CreationDate=int(time.time())
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
