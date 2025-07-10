@@ -22,20 +22,18 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # Исправление: используем "NOCHANGE" вместо "ADDED"
+    # Создаем минимальный OwnerHistory без ChangeAction
     owner_history = f.createIfcOwnerHistory(
         f.createIfcPersonAndOrganization(
-            f.createIfcPerson(FamilyName="AI System"), 
-            f.createIfcOrganization(Name="AutoDesign Inc.")
+            f.createIfcPerson(FamilyName="System"), 
+            f.createIfcOrganization(Name="Default")
         ),
         f.createIfcApplication(
-            f.createIfcOrganization(Name="AI Assistant"), 
+            f.createIfcOrganization(Name="Default"), 
             "1.0", 
-            "AutoDesign Solver", 
-            "ADS"
-        ),
-        "NOCHANGE",  # Исправлено: было "ADDED"
-        int(time.time())
+            "Default", 
+            "Default"
+        )
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
