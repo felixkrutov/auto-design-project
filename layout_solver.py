@@ -30,15 +30,15 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     application_org = f.createIfcOrganization(Name="AI Assistant")
     application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
     
-    # Создаем OwnerHistory с правильными типами
+    # Создаем OwnerHistory с минимальными параметрами
     owner_history = f.createIfcOwnerHistory(
         person_org,
         application,
-        None,        # ChangeAction - оставляем пустым
-        None,        # CreationDate - можно оставить пустым
+        None,        # ChangeAction
+        None,        # CreationDate
         None,        # LastModifyingUser
         None,        # LastModifyingApplication  
-        int(time.time())  # LastModifiedDate
+        None         # LastModifiedDate
     )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
