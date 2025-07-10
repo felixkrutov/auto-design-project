@@ -251,13 +251,52 @@ def solve_layout(sheet_url, task_file_path):
 
     print("  > Применение пользовательских правил...")
     for _, rule in rules_df.iterrows():
+        rule_type = rule['Тип правила']
         obj1_name = rule['Объект1']
-        if obj1_name not in positions: 
-            print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' из правил не найден в task.json. Пропускаем правило.")
+        value_str = str(rule['Значение']).strip()
+
+        if rule_type == 'Запретная зона':
+            try:
+                x_min, y_min, x_max, y_max = map(float, value_str.split(','))
+            except Exception:
+                print(
+                    f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение запретной зоны '{obj1_name}'. Ожидается 'Xmin,Ymin,Xmax,Ymax'."
+                )
+                continue
+
+            x_min_s = int(x_min * SCALE)
+            y_min_s = int(y_min * SCALE)
+            x_max_s = int(x_max * SCALE)
+            y_max_s = int(y_max * SCALE)
+
+            zone_safe = obj1_name.replace(' ', '_')
+            print(
+                f"    - ПРАВИЛО: Запретная зона '{obj1_name}' в области [{x_min}, {y_min}] - [{x_max}, {y_max}]."
+            )
+
+            for item in equipment_list:
+                iname = item['name']
+                width_s = int(item['width'] * SCALE)
+                depth_s = int(item['depth'] * SCALE)
+
+                left = model.NewBoolVar(f"{iname}_left_of_{zone_safe}")
+                right = model.NewBoolVar(f"{iname}_right_of_{zone_safe}")
+                below = model.NewBoolVar(f"{iname}_below_{zone_safe}")
+                above = model.NewBoolVar(f"{iname}_above_{zone_safe}")
+
+                model.Add(positions[iname]['x'] + width_s <= x_min_s).OnlyEnforceIf(left)
+                model.Add(positions[iname]['x'] >= x_max_s).OnlyEnforceIf(right)
+                model.Add(positions[iname]['y'] + depth_s <= y_min_s).OnlyEnforceIf(below)
+                model.Add(positions[iname]['y'] >= y_max_s).OnlyEnforceIf(above)
+                model.AddBoolOr([left, right, below, above])
             continue
 
-        rule_type = rule['Тип правила']
-        value_str = str(rule['Значение']).strip()
+        if obj1_name not in positions:
+            print(
+                f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' из правил не найден в task.json. Пропускаем правило."
+            )
+            continue
+
         value = float(value_str) if value_str else 0.0
         value_scaled = int(value * SCALE)
 
