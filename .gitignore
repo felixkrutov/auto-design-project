@@ -13,3 +13,4 @@ task.json
 # Локальные настройки IDE
 .idea/
 .vscode/
+!models/*.ifc
