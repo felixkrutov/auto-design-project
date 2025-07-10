@@ -2,6 +2,7 @@ import ifcopenshell
 import pandas as pd
 import sys
 import math
+import numpy as np
 
 def get_rules_from_google_sheet(sheet_url):
     """Читает правила из Google Таблицы."""
@@ -15,8 +16,20 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
+# --- НОВЫЙ, УЛУЧШЕННЫЙ БЛОК ИЗВЛЕЧЕНИЯ КООРДИНАТ ---
+def get_object_placement(ifc_placement):
+    """Рекурсивно извлекает и преобразует координаты объекта."""
+    if ifc_placement.is_a('IfcLocalPlacement'):
+        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo)
+        local_matrix = ifcopenshell.util.placement.get_local_placement(ifc_placement.RelativePlacement)
+        return np.dot(parent_matrix, local_matrix)
+    elif ifc_placement.is_a('IfcGridPlacement'):
+        # Обработка размещения по сетке (пока пропустим)
+        return np.identity(4)
+    return np.identity(4)
+
 def get_placements_from_ifc(ifc_file_path):
-    """Извлекает имена и координаты объектов из IFC файла."""
+    """Извлекает имена и глобальные координаты объектов из IFC файла."""
     print(f"2. Анализируем IFC файл '{ifc_file_path}'...")
     try:
         ifc_file = ifcopenshell.open(ifc_file_path)
@@ -26,24 +39,18 @@ def get_placements_from_ifc(ifc_file_path):
         for element in elements:
             name = element.Name
             if element.ObjectPlacement:
-                # Проходим по сложной структуре размещений, чтобы найти глобальные координаты
-                placement = element.ObjectPlacement
-                while placement.PlacementRelTo:
-                    parent_coords = placement.PlacementRelTo.RelativePlacement.Location.Coordinates
-                    local_coords = placement.RelativePlacement.Location.Coordinates
-                    # Складываем координаты, чтобы получить абсолютные
-                    coords = tuple(p + l for p, l in zip(parent_coords, local_coords))
-                    placement.RelativePlacement.Location.Coordinates = coords
-                    placement = placement.PlacementRelTo
-                
-                final_coords = placement.RelativePlacement.Location.Coordinates
-                placements[name] = {'x': final_coords[0], 'y': final_coords[1]}
+                # Получаем матрицу трансформации
+                matrix = get_object_placement(element.ObjectPlacement)
+                # Координаты находятся в последнем столбце матрицы
+                coords = matrix[:3, 3]
+                placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
         print(f"  > Найдено {len(placements)} объектов для проверки.")
         return placements
     except Exception as e:
         print(f"  > ОШИБКА: Не удалось прочитать или проанализировать IFC файл. {e}")
         return None
+# --- КОНЕЦ НОВОГО БЛОКА ---
 
 def validate_model(sheet_url, ifc_file_path):
     """Главная функция-валидатор."""
@@ -70,7 +77,6 @@ def validate_model(sheet_url, ifc_file_path):
 
         obj1_coords = placements[obj1_name]
         
-        # Проверка отступов от стен
         if rule_type == 'Мин. отступ от стены X0':
             actual_value = obj1_coords['x']
             if actual_value >= expected_value:
@@ -87,7 +93,6 @@ def validate_model(sheet_url, ifc_file_path):
                 print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)")
                 all_rules_passed = False
 
-        # Проверка расстояния между объектами
         elif rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in placements:
@@ -98,7 +103,7 @@ def validate_model(sheet_url, ifc_file_path):
             obj2_coords = placements[obj2_name]
             dx = obj1_coords['x'] - obj2_coords['x']
             dy = obj1_coords['y'] - obj2_coords['y']
-            actual_distance = math.hypot(dx, dy) # sqrt(dx*dx + dy*dy)
+            actual_distance = math.hypot(dx, dy)
             
             if actual_distance >= expected_value:
                 print(f"  - [OK] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м >= {expected_value:.2f}м")
@@ -121,4 +126,12 @@ if __name__ == "__main__":
     else:
         google_sheet_url = sys.argv[1]
         ifc_file_path = sys.argv[2]
+        # Проверяем, установлена ли библиотека numpy
+        try:
+            import numpy
+        except ImportError:
+            print("\nОшибка: Библиотека numpy не установлена. Пожалуйста, выполните:")
+            print("pip install numpy\n")
+            sys.exit(1)
+            
         validate_model(google_sheet_url, ifc_file_path)
