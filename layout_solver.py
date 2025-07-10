@@ -5,7 +5,7 @@ from ortools.sat.python import cp_model
 import sys
 import json
 
-# --- ОСНОВНЫЕ ФУНКЦИИ ---
+# --- ФИНАЛЬНЫЙ ИСПРАВЛЕННЫЙ КОД ---
 
 def get_rules_from_google_sheet(sheet_url):
     """Загружает правила из Google Таблицы."""
@@ -25,12 +25,16 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     f = ifcopenshell.file(schema="IFC4")
     
     # Стандартный заголовок и иерархия проекта
-    person = f.createIfcPerson(FamilyName="AI System")
-    organization = f.createIfcOrganization(Name="AutoDesign Inc.")
-    person_org = f.createIfcPersonAndOrganization(person, organization)
-    application_org = f.createIfcOrganization(Name="AI Assistant")
-    application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
-    owner_history = f.createIfcOwnerHistory(person_org, application, None, None, None, None, None)
+    owner_history = f.createIfcOwnerHistory(
+        f.createIfcPersonAndOrganization(
+            f.createIfcPerson(FamilyName="AI System"),
+            f.createIfcOrganization(Name="AutoDesign Inc.")
+        ),
+        f.createIfcApplication(
+            f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"
+        ),
+        'ADDED', None, None, None, int(pd.Timestamp.now().timestamp())
+    )
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
@@ -41,9 +45,9 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, task_data['storey_name'], ObjectPlacement=f.createIfcLocalPlacement(building.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0]))))
     storey_placement = storey.ObjectPlacement
 
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
 
     # --- ДОБАВЛЕНИЕ ПОЛА И СТЕН (ЯВНЫЙ И КОРРЕКТНЫЙ МЕТОД) ---
     print("  > Создание строительных конструкций (пол и стены)...")
@@ -58,7 +62,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(slab_thickness))
     floor_shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [floor_solid])])
     floor = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, "Пол", ObjectPlacement=floor_placement, Representation=floor_shape, PredefinedType='FLOOR')
-    f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "FloorContainer", None, [floor], storey)
+    f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [floor], storey)
 
     # Создаем Стены
     wall_definitions = [
@@ -73,7 +77,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(h))
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         wall = f.createIfcWall(ifcopenshell.guid.new(), owner_history, wall_def['name'], ObjectPlacement=placement, Representation=shape)
-        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "WallContainer", None, [wall], storey)
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [wall], storey)
 
     # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
@@ -91,7 +95,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
             prop_set = f.createIfcPropertySet(ifcopenshell.guid.new(), owner_history, "Параметры", None, prop_values)
             f.createIfcRelDefinesByProperties(ifcopenshell.guid.new(), owner_history, None, None, [element], prop_set)
         
-        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Content", None, [element], storey)
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [element], storey)
     
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
@@ -165,8 +169,8 @@ def solve_layout(sheet_url, task_file_path):
             center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
             center2_y = positions[obj2_name]['y'] + int(obj2_data['depth'] * SCALE / 2)
 
-            dx = model.NewIntVar(-int(room_width * SCALE), int(room_depth * SCALE), f"dx_{obj1_name}_{obj2_name}")
-            dy = model.NewIntVar(-int(room_width * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
+            dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
+            dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
             model.Add(dx == center1_x - center2_x)
             model.Add(dy == center1_y - center2_y)
             
