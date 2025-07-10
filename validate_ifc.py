@@ -1,5 +1,5 @@
 import ifcopenshell
-import ifcopenshell.util.placement # <-- Возвращаемся к старому, надежному модулю
+import ifcopenshell.geom  # <-- ИМПОРТИРУЕМ ГЕОМЕТРИЧЕСКИЙ ДВИЖОК
 import pandas as pd
 import sys
 import math
@@ -16,30 +16,28 @@ def get_rules_from_google_sheet(sheet_url):
         print(f"  > ОШИБКА: Не удалось загрузить правила. {e}")
         return None
 
-def get_object_placement(ifc_placement):
-    """Рекурсивно извлекает и преобразует координаты объекта."""
-    if ifc_placement is None:
-        return np.identity(4)
-    if ifc_placement.is_a('IfcLocalPlacement'):
-        parent_matrix = get_object_placement(ifc_placement.PlacementRelTo)
-        # --- ИСПРАВЛЕНИЕ: Используем СТАРЫЙ, но ПРАВИЛЬНЫЙ синтаксис ---
-        local_matrix = ifcopenshell.util.placement.get_local_placement(ifc_placement.RelativePlacement)
-        return np.dot(parent_matrix, local_matrix)
-    return np.identity(4)
-
 def get_placements_from_ifc(ifc_file_path):
+    """Извлекает имена и глобальные координаты объектов, используя геометрический движок."""
     print(f"2. Анализируем IFC файл '{ifc_file_path}'...")
     try:
         ifc_file = ifcopenshell.open(ifc_file_path)
         placements = {}
         elements = ifc_file.by_type('IfcBuildingElementProxy')
         
+        # Создаем настройки для геометрического движка
+        settings = ifcopenshell.geom.settings()
+        
         for element in elements:
             name = element.Name
-            if element.ObjectPlacement:
-                matrix = get_object_placement(element.ObjectPlacement)
-                coords = matrix[:3, 3]
-                placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
+            # --- ИСПОЛЬЗУЕМ МОЩЬ БИБЛИОТЕКИ ---
+            # Эта функция сама распутывает все вложенности и возвращает готовую форму
+            shape = ifcopenshell.geom.create_shape(settings, element)
+            
+            # Матрица трансформации содержит всю информацию о положении и повороте
+            matrix = np.array(shape.transformation.matrix.data).reshape((4, 4))
+            # Глобальные координаты (X, Y, Z) - это последний столбец матрицы
+            coords = matrix[:3, 3]
+            placements[name] = {'x': coords[0], 'y': coords[1], 'z': coords[2]}
         
         print(f"  > Найдено {len(placements)} объектов для проверки.")
         return placements
@@ -52,8 +50,8 @@ def validate_model(sheet_url, ifc_file_path):
     rules_df = get_rules_from_google_sheet(sheet_url)
     placements = get_placements_from_ifc(ifc_file_path)
     
-    if rules_df is None or placements is None or not placements:
-        print("--- ВАЛИДАЦИЯ ПРЕРВАНА ИЗ-ЗА ОШИБОК ИЛИ ОТСУТСТВИЯ ОБЪЕКТОВ ---")
+    if not placements:
+        print("--- ВАЛИДАЦИЯ ПРЕРВАНА: Не удалось извлечь объекты из IFC файла. ---")
         return
 
     print("3. Начинаем проверку правил...")
@@ -67,16 +65,19 @@ def validate_model(sheet_url, ifc_file_path):
 
         obj1_coords = placements[obj1_name]
         
+        # Сравнение с допуском для чисел с плавающей точкой
+        TOLERANCE = 1e-6 
+
         if rule_type == 'Мин. отступ от стены X0':
             actual_value = obj1_coords['x']
-            if actual_value >= expected_value - 1e-6:
+            if actual_value >= expected_value - TOLERANCE:
                 print(f"  - [OK] '{obj1_name}' отступ от X0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от X0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
         
         elif rule_type == 'Мин. отступ от стены Y0':
             actual_value = obj1_coords['y']
-            if actual_value >= expected_value - 1e-6:
+            if actual_value >= expected_value - TOLERANCE:
                 print(f"  - [OK] '{obj1_name}' отступ от Y0: {actual_value:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] '{obj1_name}' отступ от Y0: {actual_value:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
@@ -90,7 +91,7 @@ def validate_model(sheet_url, ifc_file_path):
             dx, dy = obj1_coords['x'] - obj2_coords['x'], obj1_coords['y'] - obj2_coords['y']
             actual_distance = math.hypot(dx, dy)
             
-            if actual_distance >= expected_value - 1e-6:
+            if actual_distance >= expected_value - TOLERANCE:
                 print(f"  - [OK] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м >= {expected_value:.2f}м")
             else:
                 print(f"  - [ПРОВАЛ] Расстояние '{obj1_name}'-'{obj2_name}': {actual_distance:.2f}м < {expected_value:.2f}м (ОШИБКА)"); all_rules_passed = False
@@ -99,7 +100,6 @@ def validate_model(sheet_url, ifc_file_path):
     if all_rules_passed: print("✅ Поздравляю! Все правила успешно выполнены. Модель корректна.")
     else: print("❌ Внимание! В модели найдены отклонения от правил.")
     print("----------------------")
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
