@@ -25,14 +25,13 @@ def create_ifc_entity(f, entity_class, name, placement, shape, owner_history, st
 
 def create_box_shape(f, context, x, y, z, length, width, height):
     """Создает геометрию в виде параллелепипеда (box) и ее размещение."""
-    # ИСПРАВЛЕНО: Используем list [x, y, z] вместо tuple (x, y, z)
+    # ИСПРАВЛЕНО: Явно преобразуем все координаты в float
     placement = f.createIfcLocalPlacement(
         None,
-        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([x, y, z]))
+        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(x), float(y), float(z)]))
     )
-    profile = f.createIfcRectangleProfileDef('AREA', None, None, length, width)
-    # ИСПРАВЛЕНО: Используем list для IfcDirection
-    solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), height)
+    profile = f.createIfcRectangleProfileDef('AREA', None, None, float(length), float(width))
+    solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(height))
     shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
     return placement, shape
 
@@ -63,7 +62,7 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
     owner_history = f.createIfcOwnerHistory(person_org, application, None, None, None, None, None)
     
-    # ИСПРАВЛЕНО: Используем list для всех IfcCartesianPoint
+    # ИСПРАВЛЕНО: Используем литералы float (0.0) для всех координат
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
     project.RepresentationContexts = [context]
@@ -84,28 +83,27 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     slab_thickness = 0.2
 
     # Создаем пол
-    slab_placement, slab_shape = create_box_shape(f, context, 0, 0, -slab_thickness, w, d, slab_thickness)
+    slab_placement, slab_shape = create_box_shape(f, context, 0.0, 0.0, -slab_thickness, w, d, slab_thickness)
     create_ifc_entity(f, "IfcSlab", "Пол", slab_placement, slab_shape, owner_history, storey, "FLOOR")
 
     # Создаем 4 стены по периметру
-    wall1_p, wall1_s = create_box_shape(f, context, 0, 0, 0, w, wall_thickness, h)
+    wall1_p, wall1_s = create_box_shape(f, context, 0.0, 0.0, 0.0, w, wall_thickness, h)
     create_ifc_entity(f, "IfcWall", "Стена", wall1_p, wall1_s, owner_history, storey)
-    wall2_p, wall2_s = create_box_shape(f, context, w - wall_thickness, 0, 0, wall_thickness, d, h)
+    wall2_p, wall2_s = create_box_shape(f, context, w - wall_thickness, 0.0, 0.0, wall_thickness, d, h)
     create_ifc_entity(f, "IfcWall", "Стена", wall2_p, wall2_s, owner_history, storey)
-    wall3_p, wall3_s = create_box_shape(f, context, 0, d - wall_thickness, 0, w, wall_thickness, h)
+    wall3_p, wall3_s = create_box_shape(f, context, 0.0, d - wall_thickness, 0.0, w, wall_thickness, h)
     create_ifc_entity(f, "IfcWall", "Стена", wall3_p, wall3_s, owner_history, storey)
-    wall4_p, wall4_s = create_box_shape(f, context, 0, 0, 0, wall_thickness, d, h)
+    wall4_p, wall4_s = create_box_shape(f, context, 0.0, 0.0, 0.0, wall_thickness, d, h)
     create_ifc_entity(f, "IfcWall", "Стена", wall4_p, wall4_s, owner_history, storey)
     
     # --- РАЗМЕЩЕНИЕ ОБОРУДОВАНИЯ ---
     print("  > Размещение оборудования...")
     for item in placements:
-        # ИСПРАВЛЕНО: Используем list для координат оборудования
+        # ИСПРАВЛЕНО: Явно преобразуем координаты оборудования в float
         element_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([float(item['x']), float(item['y']), 0.0])))
         
-        profile = f.createIfcRectangleProfileDef('AREA', None, None, item['width'], item['depth'])
-        # ИСПРАВЛЕНО: Используем list для IfcDirection
-        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), item['height'])
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, float(item['width']), float(item['depth']))
+        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(item['height']))
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
@@ -181,28 +179,4 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(dx2 + dy2 >= dist_sq)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
 
-    print("3. Запуск решателя OR-Tools...")
-    solver = cp_model.CpSolver()
-    status = solver.Solve(model)
-
-    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("  > Решение найдено!")
-        final_placements = [{'name': item['name'], 
-                             'x': solver.Value(positions[item['name']]['x']) / SCALE, 
-                             'y': solver.Value(positions[item['name']]['y']) / SCALE, 
-                             'width': item['width'], 'depth': item['depth'], 'height': item['height'], 
-                             'attributes': item.get('attributes', {})} 
-                            for item in equipment_list]
-        create_ifc_file(task_data, final_placements)
-    else:
-        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу.")
-    
-    print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
-
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
-    else:
-        google_sheet_url = sys.argv[1]
-        task_json_path = sys.argv[2]
-        solve_layout(google_sheet_url, task_json_path)
+    print("3
