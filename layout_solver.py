@@ -222,7 +222,8 @@ def solve_layout(sheet_url, task_file_path):
     room_depth = room_dims['depth']
 
     model = cp_model.CpModel()
-    SCALE = 1000 # Масштабирование для работы с целыми числами в OR-Tools
+    SCALE = 1000  # Масштабирование для работы с целыми числами в OR-Tools
+    ZONE_MARGIN = 1  # 1 мм для строгого исключения из запретных зон
 
     wall_thickness = 0.2
     # Определяем внутренние границы комнаты, чтобы оборудование не выходило за стены
@@ -270,8 +271,7 @@ def solve_layout(sheet_url, task_file_path):
             x_max_s = int(x_max * SCALE)
             y_max_s = int(y_max * SCALE)
 
-            # Небольшой отступ гарантирует, что оборудование не коснётся границы
-            margin = 1  # 1 мм при SCALE=1000
+            # Небольшой отступ (ZONE_MARGIN), чтобы оборудование не касалось границ зоны
 
             zone_safe = obj1_name.replace(' ', '_')
             print(
@@ -292,16 +292,16 @@ def solve_layout(sheet_url, task_file_path):
                 above = model.NewBoolVar(f"{iname}_above_{zone_safe}")
 
                 # Объект строго слева от зоны
-                model.Add(positions[iname]['x'] + width_s <= x_min_s - margin).OnlyEnforceIf(left)
+                model.Add(positions[iname]['x'] + width_s <= x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
 
                 # Объект строго справа от зоны
-                model.Add(positions[iname]['x'] >= x_max_s + margin).OnlyEnforceIf(right)
+                model.Add(positions[iname]['x'] >= x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
 
                 # Объект строго ниже зоны
-                model.Add(positions[iname]['y'] + depth_s <= y_min_s - margin).OnlyEnforceIf(below)
+                model.Add(positions[iname]['y'] + depth_s <= y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
 
                 # Объект строго выше зоны
-                model.Add(positions[iname]['y'] >= y_max_s + margin).OnlyEnforceIf(above)
+                model.Add(positions[iname]['y'] >= y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
 
                 # хотя бы одно из условий должно выполниться
                 model.AddBoolOr([left, right, below, above])
