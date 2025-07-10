@@ -216,6 +216,7 @@ def solve_layout(sheet_url, task_file_path):
 
     print("2. Настройка модели и ограничений...")
     equipment_list = task_data['equipment']
+    print(f"  > Количество объектов оборудования в задании: {len(equipment_list)}")
     room_dims = task_data['room_dimensions']
     room_width = room_dims['width']
     room_depth = room_dims['depth']
@@ -357,8 +358,9 @@ def solve_layout(sheet_url, task_file_path):
     print("3. Запуск решателя OR-Tools...")
     solver = cp_model.CpSolver()
     # Установка лимита по времени для больших или сложных задач
-    solver.parameters.max_time_in_seconds = 60.0 
+    solver.parameters.max_time_in_seconds = 60.0
     status = solver.Solve(model)
+    print(f"  > Статус решателя: {solver.StatusName(status)}")
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("  > Решение найдено!")
@@ -366,8 +368,11 @@ def solve_layout(sheet_url, task_file_path):
                              'x': solver.Value(positions[item['name']]['x']) / SCALE,
                              'y': solver.Value(positions[item['name']]['y']) / SCALE,
                              'width': item['width'], 'depth': item['depth'], 'height': item['height'],
-                             'attributes': item.get('attributes', {})} 
+                             'attributes': item.get('attributes', {})}
                             for item in equipment_list]
+        placed_names = [p['name'] for p in final_placements]
+        print(f"  > Размещено объектов: {len(final_placements)} из {len(equipment_list)}")
+        print("    - " + ", ".join(placed_names))
         create_ifc_file(task_data, final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
