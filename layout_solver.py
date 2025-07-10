@@ -5,6 +5,7 @@ from ortools.sat.python import cp_model
 import sys
 import json
 import time
+import os
 
 ### ФИНАЛЬНЫЙ КОД, РЕШАЮЩИЙ ПРОБЛЕМУ ПЕРЕСЕЧЕНИЯ УГЛОВ (ГЕОМЕТРИЯ) ###
 
@@ -118,15 +119,78 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         element_placement_x = float(item['x']) + item_width / 2
         element_placement_y = float(item['y']) + item_depth / 2
 
-        element_placement = f.createIfcLocalPlacement(storey_placement, 
-                                                       f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([element_placement_x, element_placement_y, 0.0])))
-        
-        profile = f.createIfcRectangleProfileDef('AREA', None, None, item_width, item_depth)
-        solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), item_height)
-        shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
-        
+        element_placement = f.createIfcLocalPlacement(
+            storey_placement,
+            f.createIfcAxis2Placement3D(
+                f.createIfcCartesianPoint([element_placement_x, element_placement_y, 0.0])
+            ),
+        )
+
+        shape = None
+        model_path = item.get("model_path")
+        if model_path:
+            try:
+                ext_ifc = ifcopenshell.open(model_path)
+                ext_shape = None
+                if ext_ifc.by_type("IfcProductDefinitionShape"):
+                    ext_shape = ext_ifc.by_type("IfcProductDefinitionShape")[0]
+                elif ext_ifc.by_type("IfcShapeRepresentation"):
+                    sr = ext_ifc.by_type("IfcShapeRepresentation")[0]
+                    ext_shape = f.createIfcProductDefinitionShape(None, None, [f.add(sr)])
+
+                if ext_shape:
+                    rep_map = f.createIfcRepresentationMap(
+                        f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])),
+                        f.add(
+                            ext_shape.Representations[0]
+                            if hasattr(ext_shape, "Representations")
+                            else ext_shape
+                        ),
+                    )
+                    transform = f.createIfcCartesianTransformationOperator3D(
+                        None,
+                        None,
+                        None,
+                        f.createIfcCartesianPoint([0.0, 0.0, 0.0]),
+                    )
+                    mapped_item = f.createIfcMappedItem(rep_map, transform)
+                    shape = f.createIfcProductDefinitionShape(
+                        None,
+                        None,
+                        [
+                            f.createIfcShapeRepresentation(
+                                context, "Body", "MappedRepresentation", [mapped_item]
+                            )
+                        ],
+                    )
+                    print(
+                        f"    - Использована модель '{model_path}' для '{item['name']}'."
+                    )
+            except Exception as e:
+                print(
+                    f"    - ПРЕДУПРЕЖДЕНИЕ: Не удалось загрузить модель '{model_path}'. {e}"
+                )
+
+        if shape is None:
+            profile = f.createIfcRectangleProfileDef('AREA', None, None, item_width, item_depth)
+            solid = f.createIfcExtrudedAreaSolid(
+                profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), item_height
+            )
+            shape = f.createIfcProductDefinitionShape(
+                None,
+                None,
+                [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])],
+            )
+            print(f"    - Использована упрощенная геометрия для '{item['name']}'.")
+
         # Используем IfcBuildingElementProxy для общего оборудования
-        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
+        element = f.createIfcBuildingElementProxy(
+            ifcopenshell.guid.new(),
+            owner_history,
+            item['name'],
+            ObjectPlacement=element_placement,
+            Representation=shape,
+        )
 
         if 'attributes' in item and item['attributes']:
             prop_values = [f.createIfcPropertySingleValue(k, None, f.createIfcLabel(v), None) for k, v in item['attributes'].items()]
