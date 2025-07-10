@@ -53,7 +53,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     wall_thickness = 0.2
     slab_thickness = 0.2
 
-    # Создаем Пол
     floor_placement = f.createIfcLocalPlacement(storey_placement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, -slab_thickness])))
     floor_profile = f.createIfcRectangleProfileDef('AREA', None, None, float(w), float(d))
     floor_solid = f.createIfcExtrudedAreaSolid(floor_profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(slab_thickness))
@@ -61,7 +60,6 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     floor = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, "Пол", ObjectPlacement=floor_placement, Representation=floor_shape, PredefinedType='FLOOR')
     f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [floor], storey)
 
-    # Создаем Стены
     wall_definitions = [
         {'name': 'Стена_Низ', 'x': 0.0, 'y': 0.0, 'len': w, 'wid': wall_thickness},
         {'name': 'Стена_Право', 'x': w - wall_thickness, 'y': 0.0, 'len': wall_thickness, 'wid': d},
@@ -83,14 +81,14 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
         solid = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), float(item['height']))
         shape = f.createIfcProductDefinitionShape(None, None, [f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [solid])])
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, item['name'], ObjectPlacement=element_placement, Representation=shape)
-        
+
         if 'attributes' in item and item['attributes']:
             prop_values = [f.createIfcPropertySingleValue(k, None, f.createIfcLabel(v), None) for k, v in item['attributes'].items()]
             prop_set = f.createIfcPropertySet(ifcopenshell.guid.new(), owner_history, "Параметры", None, prop_values)
             f.createIfcRelDefinesByProperties(ifcopenshell.guid.new(), owner_history, None, None, [element], prop_set)
-        
+
         f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [element], storey)
-    
+
     f.write(filename)
     print(f"  > Файл '{filename}' успешно создан!")
 
@@ -111,7 +109,7 @@ def solve_layout(sheet_url, task_file_path):
     room_dims = task_data['room_dimensions']
     room_width = room_dims['width']
     room_depth = room_dims['depth']
-    
+
     model = cp_model.CpModel()
     SCALE = 1000
 
@@ -125,7 +123,7 @@ def solve_layout(sheet_url, task_file_path):
     for item in equipment_list:
         item_width_scaled = int(item['width'] * SCALE)
         item_depth_scaled = int(item['depth'] * SCALE)
-        
+
         positions[item['name']] = {
             'x': model.NewIntVar(min_x, max_x - item_width_scaled, f"x_{item['name']}"),
             'y': model.NewIntVar(min_y, max_y - item_depth_scaled, f"y_{item['name']}")
@@ -139,7 +137,7 @@ def solve_layout(sheet_url, task_file_path):
     for _, rule in rules_df.iterrows():
         obj1_name = rule['Объект1']
         if obj1_name not in positions: continue
-        
+
         rule_type = rule['Тип правила']
         value = float(rule['Значение'])
         value_scaled = int(value * SCALE)
@@ -147,10 +145,10 @@ def solve_layout(sheet_url, task_file_path):
         if rule_type == 'Мин. расстояние до':
             obj2_name = rule['Объект2']
             if obj2_name not in positions: continue
-            
+
             obj1_data = next(e for e in equipment_list if e['name'] == obj1_name)
             obj2_data = next(e for e in equipment_list if e['name'] == obj2_name)
-            
+
             center1_x = positions[obj1_name]['x'] + int(obj1_data['width'] * SCALE / 2)
             center1_y = positions[obj1_name]['y'] + int(obj1_data['depth'] * SCALE / 2)
             center2_x = positions[obj2_name]['x'] + int(obj2_data['width'] * SCALE / 2)
@@ -159,13 +157,14 @@ def solve_layout(sheet_url, task_file_path):
             dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_name}_{obj2_name}")
             dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_name}_{obj2_name}")
             model.Add(dx == center1_x - center2_x)
+            # ******** ВОТ ОНО, ИСПРАВЛЕНИЕ ********
             model.Add(dy == center1_y - center2_y)
-            
+
             dx2 = model.NewIntVar(0, int(room_width * SCALE)**2, f"dx2_{obj1_name}_{obj2_name}")
             dy2 = model.NewIntVar(0, int(room_depth * SCALE)**2, f"dy2_{obj1_name}_{obj2_name}")
             model.AddMultiplicationEquality(dx2, dx, dx)
             model.AddMultiplicationEquality(dy2, dy, dy)
-            
+
             dist_sq = value_scaled**2
             model.Add(dx2 + dy2 >= dist_sq)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
@@ -176,16 +175,16 @@ def solve_layout(sheet_url, task_file_path):
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("  > Решение найдено!")
-        final_placements = [{'name': item['name'], 
-                             'x': solver.Value(positions[item['name']]['x']) / SCALE, 
-                             'y': solver.Value(positions[item['name']]['y']) / SCALE, 
-                             'width': item['width'], 'depth': item['depth'], 'height': item['height'], 
-                             'attributes': item.get('attributes', {})} 
+        final_placements = [{'name': item['name'],
+                             'x': solver.Value(positions[item['name']]['x']) / SCALE,
+                             'y': solver.Value(positions[item['name']]['y']) / SCALE,
+                             'width': item['width'], 'depth': item['depth'], 'height': item['height'],
+                             'attributes': item.get('attributes', {})}
                             for item in equipment_list]
         create_ifc_file(task_data, final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу.")
-    
+
     print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
 
 if __name__ == "__main__":
