@@ -22,16 +22,24 @@ def create_ifc_file(task_data, placements, filename="prototype.ifc"):
     print("Создание IFC файла...")
     f = ifcopenshell.file(schema="IFC4")
     
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Заменяем "ADDED" на f.createIfcStateEnum('ADDED')
+    # Исправленное создание OwnerHistory
+    person = f.createIfcPerson(FamilyName="AI System")
+    organization = f.createIfcOrganization(Name="AutoDesign Inc.")
+    person_org = f.createIfcPersonAndOrganization(person, organization)
+    
+    application_org = f.createIfcOrganization(Name="AI Assistant")
+    application = f.createIfcApplication(application_org, "1.0", "AutoDesign Solver", "ADS")
+    
+    # Создаем OwnerHistory с правильными типами
     owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(f.createIfcPerson(FamilyName="AI System"), f.createIfcOrganization(Name="AutoDesign Inc.")),
-        f.createIfcApplication(f.createIfcOrganization(Name="AI Assistant"), "1.0", "AutoDesign Solver", "ADS"),
-        None, # ChangeAction - оставляем пустым, т.к. State более современный
-        int(time.time())
+        person_org,
+        application,
+        "ADDED",  # ChangeAction как строка (ENUMERATION)
+        None,     # CreationDate - можно оставить пустым
+        None,     # LastModifyingUser
+        None,     # LastModifyingApplication  
+        int(time.time())  # LastModifiedDate
     )
-    owner_history.State = 'ADDED' # Устанавливаем статус через атрибут, это более надежно
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, task_data['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
