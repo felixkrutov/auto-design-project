@@ -169,10 +169,73 @@ def validate_layout(rules_df, placements):
                 if rule_type == 'Выровнять по оси X':
                     is_rule_passed = math.isclose(obj1['centerX'], obj2['centerX'], abs_tol=0.001)
                     actual_value_str = f"центры: {obj1['centerX']:.3f}м и {obj2['centerX']:.3f}м"
-                else: # 'Выровнять по оси Y'
+                else:  # 'Выровнять по оси Y'
                     is_rule_passed = math.isclose(obj1['centerY'], obj2['centerY'], abs_tol=0.001)
                     actual_value_str = f"центры: {obj1['centerY']:.3f}м и {obj2['centerY']:.3f}м"
                 rule_description += f" и '{obj2_name}'"
+
+            elif rule_type == 'Технологическая последовательность':
+                obj2_name = rule['Объект2'].strip()
+                direction = rule.get('Направление', 'Y').strip()
+                if obj2_name not in placements:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    continue
+
+                obj2 = placements[obj2_name]
+                gap = 2.0
+                if direction == 'Y':
+                    is_rule_passed = obj1['minY'] + obj1['depth'] <= obj2['minY'] - gap + 0.001
+                    actual_value_str = f"Y1_end={obj1['minY'] + obj1['depth']:.2f}, Y2_start={obj2['minY']:.2f}"
+                else:
+                    is_rule_passed = obj1['minX'] + obj1['width'] <= obj2['minX'] - gap + 0.001
+                    actual_value_str = f"X1_end={obj1['minX'] + obj1['width']:.2f}, X2_start={obj2['minX']:.2f}"
+                rule_description += f" -> '{obj2_name}'"
+
+            elif rule_type == 'Производственная зона':
+                try:
+                    x_min, y_min, x_max, y_max = map(float, value_str.split(','))
+                except Exception:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение зоны для '{obj1_name}'.")
+                    continue
+
+                is_rule_passed = (obj1['minX'] >= x_min - 0.001 and obj1['minY'] >= y_min - 0.001 and
+                                   obj1['minX'] + obj1['width'] <= x_max + 0.001 and
+                                   obj1['minY'] + obj1['depth'] <= y_max + 0.001)
+                actual_value_str = f"границы объекта в зоне [{x_min},{y_min},{x_max},{y_max}]"
+
+            elif rule_type == 'Параллельная линия':
+                obj2_name = rule['Объект2'].strip()
+                offset = float(value_str) if value_str else 0.0
+                if obj2_name not in placements:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    continue
+
+                obj2 = placements[obj2_name]
+                expected = obj1['centerX'] + offset
+                is_rule_passed = math.isclose(obj2['centerX'], expected, abs_tol=0.001)
+                actual_value_str = f"X2={obj2['centerX']:.2f}, ожидалось {expected:.2f}"
+                rule_description += f" и '{obj2_name}'"
+
+            elif rule_type == 'Коридор':
+                try:
+                    x1, y1, x2, y2, width = map(float, value_str.split(','))
+                except Exception:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение коридора в правиле #{index+1}.")
+                    continue
+
+                cx_min = min(x1, x2) - width/2
+                cx_max = max(x1, x2) + width/2
+                cy_min = min(y1, y2) - width/2
+                cy_max = max(y1, y2) + width/2
+
+                violator = None
+                for n, obj in placements.items():
+                    if (obj['minX'] < cx_max and obj['minX'] + obj['width'] > cx_min and
+                        obj['minY'] < cy_max and obj['minY'] + obj['depth'] > cy_min):
+                        violator = n
+                        break
+                is_rule_passed = violator is None
+                actual_value_str = f"пересекает {violator}" if violator else "коридор свободен"
             
             else:
                 print(f"  - [НЕИЗВЕСТНО] Тип правила '{rule_type}' не поддерживается валидатором.")

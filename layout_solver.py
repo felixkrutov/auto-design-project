@@ -452,11 +452,72 @@ def solve_layout(sheet_url, task_file_path):
         max_x_all = model.NewIntVar(min_x_room_inner, max_x_room_inner, "max_x_all")
         min_y_all = model.NewIntVar(min_y_room_inner, max_y_room_inner, "min_y_all")
         max_y_all = model.NewIntVar(min_y_room_inner, max_y_room_inner, "max_y_all")
-        
+
         # Минимальная X координата среди всех объектов
         for item in equipment_list:
             model.Add(min_x_all <= positions[item['name']]['x'])
-        
+
         # Максимальная X координата среди всех объектов
         for item in equipment_list:
-            model.Add(max_x_all >= positions[item['name']]['x'] + int(item['width'] * SCALE
+            model.Add(max_x_all >= positions[item['name']]['x'] + int(item['width'] * SCALE))
+
+        # Минимальная Y координата среди всех объектов
+        for item in equipment_list:
+            model.Add(min_y_all <= positions[item['name']]['y'])
+
+        # Максимальная Y координата среди всех объектов
+        for item in equipment_list:
+            model.Add(max_y_all >= positions[item['name']]['y'] + int(item['depth'] * SCALE))
+
+        model.Add(total_x_spread == max_x_all - min_x_all)
+        model.Add(total_y_spread == max_y_all - min_y_all)
+    else:
+        model.Add(total_x_spread == 0)
+        model.Add(total_y_spread == 0)
+
+    model.Minimize(total_x_spread + total_y_spread)
+
+    print("3. Запуск решателя OR-Tools...")
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 60.0
+    status = solver.Solve(model)
+    print(f"  > Статус решателя: {solver.StatusName(status)}")
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  > Решение найдено!")
+        final_placements = [
+            {
+                'name': item['name'],
+                'x': solver.Value(positions[item['name']]['x']) / SCALE,
+                'y': solver.Value(positions[item['name']]['y']) / SCALE,
+                'width': item['width'],
+                'depth': item['depth'],
+                'height': item['height'],
+                'attributes': item.get('attributes', {})
+            }
+            for item in equipment_list
+        ]
+        placed_names = [p['name'] for p in final_placements]
+        print(f"  > Размещено объектов: {len(final_placements)} из {len(equipment_list)}")
+        print("    - " + ", ".join(placed_names))
+        create_ifc_file(task_data, final_placements)
+    else:
+        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
+        if status == cp_model.INFEASIBLE:
+            print("    > Статус решателя: INFEASIBLE (Неразрешимо). Правила противоречат друг другу или нет места.")
+        elif status == cp_model.MODEL_INVALID:
+            print("    > Статус решателя: MODEL_INVALID (Модель неверна). Внутренняя ошибка модели CP-SAT.")
+        elif status == cp_model.UNKNOWN:
+            print("    > Статус решателя: UNKNOWN (Решение не найдено в отведенное время, или возникла другая проблема).")
+        else:
+            print(f"    > Неизвестный статус решателя: {solver.StatusName(status)}")
+
+    print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
+    else:
+        google_sheet_url = sys.argv[1]
+        task_json_path = sys.argv[2]
+        solve_layout(google_sheet_url, task_json_path)
