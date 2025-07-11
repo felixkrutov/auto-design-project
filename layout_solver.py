@@ -233,6 +233,7 @@ def solve_layout(sheet_url, task_file_path):
     model.AddNoOverlap2D(intervals_x, intervals_y)
 
     print("  > Применение пользовательских правил...")
+    applied_rules = []
     for _, rule in rules_df.iterrows():
         rule_type = rule['Тип правила']
         obj1_name = rule['Объект1']
@@ -252,11 +253,10 @@ def solve_layout(sheet_url, task_file_path):
 
             zone_safe = obj1_name.replace(' ', '_')
             print(f"    - ПРАВИЛО: Запретная зона '{obj1_name}' в области [{x_min}, {y_min}] - [{x_max}, {y_max}].")
+            applied_rules.append(f"Запретная зона {obj1_name} [{x_min},{y_min},{x_max},{y_max}]")
 
             for item in equipment_list:
                 iname = item['name']
-                if iname == obj1_name:
-                    continue
 
                 width_s = int(item['width'] * SCALE)
                 depth_s = int(item['depth'] * SCALE)
@@ -301,6 +301,7 @@ def solve_layout(sheet_url, task_file_path):
                 model.Add(obj1_end_x + int(2.0 * SCALE) <= obj2_start_x)
 
             print(f"    - ПРАВИЛО: Технологическая последовательность '{obj1_name}' -> '{obj2_name}' по оси {direction}.")
+            applied_rules.append(f"Техпоследовательность {obj1_name}->{obj2_name} {direction}")
 
         elif rule_type == 'Производственная зона':
             # Ограничивает объект определенной зоной
@@ -327,6 +328,7 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(positions[obj1_name]['y'] + int(obj_data['depth'] * SCALE) <= y_max_s)
 
             print(f"    - ПРАВИЛО: Объект '{obj1_name}' ограничен зоной [{x_min}, {y_min}] - [{x_max}, {y_max}].")
+            applied_rules.append(f"Производственная зона для {obj1_name} [{x_min},{y_min},{x_max},{y_max}]")
 
         elif rule_type == 'Параллельная линия':
             # Объекты должны быть на одной линии (выровнены) с определенным смещением
@@ -347,6 +349,7 @@ def solve_layout(sheet_url, task_file_path):
             model.Add(center2_x == center1_x + int(offset * SCALE))
 
             print(f"    - ПРАВИЛО: Параллельная линия '{obj1_name}' и '{obj2_name}' со смещением {offset}м.")
+            applied_rules.append(f"Параллельная линия {obj1_name}-{obj2_name} offset {offset}")
 
         elif rule_type == 'Коридор':
             # Обеспечивает свободный коридор между точками
@@ -368,6 +371,7 @@ def solve_layout(sheet_url, task_file_path):
             corridor_y_max_s = int(corridor_y_max * SCALE)
 
             print(f"    - ПРАВИЛО: Коридор от ({x1}, {y1}) до ({x2}, {y2}) шириной {width}м.")
+            applied_rules.append(f"Коридор ({x1},{y1})->({x2},{y2}) width {width}")
 
             for item in equipment_list:
                 iname = item['name']
@@ -416,6 +420,7 @@ def solve_layout(sheet_url, task_file_path):
             dist_sq_scaled = value_scaled**2
             model.Add(dx2 + dy2 >= dist_sq_scaled)
             print(f"    - ПРАВИЛО: Расстояние между '{obj1_name}' и '{obj2_name}' >= {value}м.")
+            applied_rules.append(f"Мин. расстояние {obj1_name}-{obj2_name} {value}")
 
         elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
             obj2_name = rule['Объект2']
@@ -438,6 +443,7 @@ def solve_layout(sheet_url, task_file_path):
                 model.Add(center1_y == center2_y)
                 axis = 'Y'
             print(f"    - ПРАВИЛО: Выровнять '{obj1_name}' и '{obj2_name}' по оси {axis}.")
+            applied_rules.append(f"Выровнять {obj1_name}-{obj2_name} axis {axis}")
 
     # ЦЕЛЕВАЯ ФУНКЦИЯ ДЛЯ ОПТИМИЗАЦИИ КОМПАКТНОСТИ
     print("  > Добавление целевой функции для компактности...")
@@ -503,6 +509,10 @@ def solve_layout(sheet_url, task_file_path):
         create_ifc_file(task_data, final_placements)
     else:
         print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
+        if applied_rules:
+            print("    > Возможно, конфликтуют следующие правила:")
+            for r in applied_rules:
+                print(f"      - {r}")
         if status == cp_model.INFEASIBLE:
             print("    > Статус решателя: INFEASIBLE (Неразрешимо). Правила противоречат друг другу или нет места.")
         elif status == cp_model.MODEL_INVALID:
