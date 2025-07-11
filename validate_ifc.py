@@ -19,8 +19,7 @@ def get_rules_from_google_sheet(sheet_url):
 
 def get_absolute_placement(ifc_placement):
     """
-    Рекурсивно вычисляет абсолютные координаты точки вставки объекта,
-    проходя по всей вложенной иерархии IfcLocalPlacement.
+    Рекурсивно вычисляет абсолютные координаты точки вставки объекта.
     """
     x, y, z = 0, 0, 0
     if ifc_placement.PlacementRelTo:
@@ -35,7 +34,7 @@ def get_absolute_placement(ifc_placement):
 def extract_placements_from_ifc(ifc_filename):
     """
     Извлекает фактическое положение и размеры объектов из IFC файла.
-    Корректно вычисляет координаты нижнего левого угла (minX, minY).
+    Использует надежный метод поиска геометрии для предотвращения ошибок.
     """
     print(f"2. Анализ IFC файла '{ifc_filename}'...")
     try:
@@ -50,30 +49,47 @@ def extract_placements_from_ifc(ifc_filename):
     for element in elements:
         name = element.Name
         
-        # --- ИСПРАВЛЕННАЯ ЛОГИКА ---
-        # 1. Извлекаем координаты ЦЕНТРАЛЬНОЙ точки вставки
-        center_x, center_y, _ = get_absolute_placement(element.ObjectPlacement)
+        # --- ИСПРАВЛЕННАЯ И УСИЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ГЕОМЕТРИИ ---
+        
+        # 1. Получаем координаты центральной точки вставки
+        center_x, center_y, center_z = get_absolute_placement(element.ObjectPlacement)
 
-        # 2. Извлекаем размеры (ширину и глубину)
-        width, depth = 0, 0
-        try:
-            shape = element.Representation.Representations[0]
-            solid = shape.Items[0]
-            profile = solid.SweptArea
-            if isinstance(profile, ifcopenshell.ifcopenshell_wrapper.IfcRectangleProfileDef):
-                width, depth = profile.XDim, profile.YDim
-            else:
-                print(f"  > ПРЕДУПРЕЖДЕНИЕ: Неподдерживаемый тип профиля для '{name}'.")
-                continue
-        except (AttributeError, IndexError):
-            print(f"  > ПРЕДУПРЕЖДЕНИЕ: Не удалось извлечь размеры для '{name}'.")
+        # 2. Надежно ищем геометрию, а не предполагаем ее структуру
+        width, depth, height = 0, 0, 0
+        found_geometry = False
+        
+        if not element.Representation:
+            print(f"  > ПРЕДУПРЕЖДЕНИЕ: У объекта '{name}' отсутствует Representation.")
             continue
 
-        # 3. Вычисляем координаты НИЖНЕГО ЛЕВОГО угла (minX, minY)
-        min_x, min_y = center_x - (width / 2), center_y - (depth / 2)
+        for rep in element.Representation.Representations:
+            # Ищем основное тело объекта ('Body') типа 'SweptSolid'
+            if rep.RepresentationIdentifier == 'Body' and rep.is_a("IfcShapeRepresentation"):
+                for item in rep.Items:
+                    if item.is_a("IfcExtrudedAreaSolid"):
+                        solid = item
+                        profile = solid.SweptArea
+                        if profile.is_a("IfcRectangleProfileDef"):
+                            width = profile.XDim
+                            depth = profile.YDim
+                            height = solid.Depth  # Извлекаем высоту
+                            found_geometry = True
+                            break # Нашли нужную геометрию, выходим из цикла по Items
+            if found_geometry:
+                break # Выходим из цикла по Representations
+        
+        if not found_geometry:
+            print(f"  > ПРЕДУПРЕЖДЕНИЕ: Не удалось извлечь размеры для '{name}'. Пропускаем объект.")
+            continue
+
+        # 3. Вычисляем координаты нижнего левого угла (minX, minY)
+        min_x = center_x - (width / 2)
+        min_y = center_y - (depth / 2)
 
         placements[name] = {
-            'x': min_x, 'y': min_y, 'width': width, 'depth': depth
+            'minX': min_x, 'minY': min_y,
+            'centerX': center_x, 'centerY': center_y,
+            'width': width, 'depth': depth, 'height': height
         }
         # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
         
@@ -109,8 +125,9 @@ def validate_layout(rules_df, placements):
             
             violator = None
             for obj_name, obj in placements.items():
-                obj_xmin, obj_ymin = obj['x'], obj['y']
-                obj_xmax, obj_ymax = obj_xmin + obj['width'], obj_ymin + obj['depth']
+                obj_xmin, obj_ymin = obj['minX'], obj['minY']
+                obj_xmax = obj_xmin + obj['width']
+                obj_ymax = obj_ymin + obj['depth']
 
                 if (obj_xmin < zone_xmax and obj_xmax > zone_xmin and
                     obj_ymin < zone_ymax and obj_ymax > zone_ymin):
@@ -135,9 +152,7 @@ def validate_layout(rules_df, placements):
                     continue
                 
                 obj2 = placements[obj2_name]
-                center1_x, center1_y = obj1['x'] + obj1['width']/2, obj1['y'] + obj1['depth']/2
-                center2_x, center2_y = obj2['x'] + obj2['width']/2, obj2['y'] + obj2['depth']/2
-                distance = math.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
+                distance = math.sqrt((obj1['centerX'] - obj2['centerX'])**2 + (obj1['centerY'] - obj2['centerY'])**2)
                 
                 is_rule_passed = distance >= value
                 rule_description += f" и '{obj2_name}' (>= {value:.2f}м)"
@@ -150,15 +165,13 @@ def validate_layout(rules_df, placements):
                     continue
 
                 obj2 = placements[obj2_name]
-                center1_x, center1_y = obj1['x'] + obj1['width']/2, obj1['y'] + obj1['depth']/2
-                center2_x, center2_y = obj2['x'] + obj2['width']/2, obj2['y'] + obj2['depth']/2
 
                 if rule_type == 'Выровнять по оси X':
-                    is_rule_passed = math.isclose(center1_x, center2_x, abs_tol=0.001)
-                    actual_value_str = f"центры: {center1_x:.3f}м и {center2_x:.3f}м"
+                    is_rule_passed = math.isclose(obj1['centerX'], obj2['centerX'], abs_tol=0.001)
+                    actual_value_str = f"центры: {obj1['centerX']:.3f}м и {obj2['centerX']:.3f}м"
                 else: # 'Выровнять по оси Y'
-                    is_rule_passed = math.isclose(center1_y, center2_y, abs_tol=0.001)
-                    actual_value_str = f"центры: {center1_y:.3f}м и {center2_y:.3f}м"
+                    is_rule_passed = math.isclose(obj1['centerY'], obj2['centerY'], abs_tol=0.001)
+                    actual_value_str = f"центры: {obj1['centerY']:.3f}м и {obj2['centerY']:.3f}м"
                 rule_description += f" и '{obj2_name}'"
             
             else:
@@ -179,7 +192,7 @@ def validate_layout(rules_df, placements):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("\nОшибка: Неверное количество аргументов.")
-        print("Пример запуска: python validate_layout.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
+        print("Пример запуска: python validate_ifc.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
     else:
         google_sheet_url = sys.argv[1]
         ifc_file_path = sys.argv[2]
