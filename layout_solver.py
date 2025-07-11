@@ -266,14 +266,14 @@ def solve_layout(sheet_url, task_file_path):
                 )
                 continue
 
-            x_min_s = int(x_min * SCALE)
-            y_min_s = int(y_min * SCALE)
-            x_max_s = int(x_max * SCALE)
-            y_max_s = int(y_max * SCALE)
+            x_min_s = int(round(x_min * SCALE))
+            y_min_s = int(round(y_min * SCALE))
+            x_max_s = int(round(x_max * SCALE))
+            y_max_s = int(round(y_max * SCALE))
 
-            # Чтобы исключить касание границы, вводим минимальный отступ ZONE_MARGIN
-            # (1 мм при SCALE=1000)
-            ZONE_MARGIN = 1 # Отступ в одну масштабированную единицу (1 мм при SCALE=1000)
+            # Чтобы исключить даже касание границы, вводим минимальный отступ
+            # ZONE_MARGIN (1 мм при SCALE=1000)
+            ZONE_MARGIN = 1  # 1 масштабная единица = 1мм
 
             zone_safe = obj1_name.replace(' ', '_')
             print(
@@ -293,21 +293,17 @@ def solve_layout(sheet_url, task_file_path):
                 below = model.NewBoolVar(f"{iname}_below_{zone_safe}")
                 above = model.NewBoolVar(f"{iname}_above_{zone_safe}")
 
-                # Объект строго слева от зоны (без касания)
+                # Объект строго слева от зоны (с зазором)
                 model.Add(positions[iname]['x'] + width_s <= x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
-                model.Add(positions[iname]['x'] + width_s > x_min_s - ZONE_MARGIN).OnlyEnforceIf(left.Not())
 
-                # Объект строго справа от зоны (без касания)
+                # Объект строго справа от зоны (с зазором)
                 model.Add(positions[iname]['x'] >= x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
-                model.Add(positions[iname]['x'] < x_max_s + ZONE_MARGIN).OnlyEnforceIf(right.Not())
 
-                # Объект строго ниже зоны (без касания)
+                # Объект строго ниже зоны (с зазором)
                 model.Add(positions[iname]['y'] + depth_s <= y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
-                model.Add(positions[iname]['y'] + depth_s > y_min_s - ZONE_MARGIN).OnlyEnforceIf(below.Not())
 
-                # Объект строго выше зоны (без касания)
+                # Объект строго выше зоны (с зазором)
                 model.Add(positions[iname]['y'] >= y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
-                model.Add(positions[iname]['y'] < y_max_s + ZONE_MARGIN).OnlyEnforceIf(above.Not())
 
                 # хотя бы одно из условий должно выполниться
                 model.AddBoolOr([left, right, below, above])

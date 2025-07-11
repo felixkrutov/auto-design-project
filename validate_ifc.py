@@ -154,6 +154,22 @@ def validate_layout(rules_df, placements):
             distance = math.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
             check_passed = distance >= value
             actual_value_str = f"факт: {distance:.2f}м"
+        elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
+            obj2_name = rule['Объект2']
+            if obj2_name not in placements:
+                print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила не найден в IFC файле.")
+                continue
+
+            obj2 = placements[obj2_name]
+            center1_x, center1_y = obj1['x'] + obj1['width']/2, obj1['y'] + obj1['depth']/2
+            center2_x, center2_y = obj2['x'] + obj2['width']/2, obj2['y'] + obj2['depth']/2
+
+            if rule_type == 'Выровнять по оси X':
+                check_passed = math.isclose(center1_x, center2_x, abs_tol=0.001)
+                actual_value_str = f"центры: {center1_x:.3f}м и {center2_x:.3f}м"
+            else:
+                check_passed = math.isclose(center1_y, center2_y, abs_tol=0.001)
+                actual_value_str = f"центры: {center1_y:.3f}м и {center2_y:.3f}м"
         
         else:
             print(f"  - [НЕИЗВЕСТНО] Правило типа '{rule_type}' не поддерживается валидатором.")
