@@ -15,19 +15,22 @@ def normalize_name(name: str) -> str:
     if not name:
         return ""
     
-    # Удаляем Unicode-категории управляющих символов
+    # Удаляем Unicode-какатегории управляющих символов (Control Characters)
+    # Например, BOM, непечатаемые символы, которые могут быть в CSV из разных источников.
     name = ''.join(c for c in name if unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Co', 'Cn'))
     
-    # Нормализуем Unicode (NFD -> NFC)
+    # Нормализуем Unicode-представления (NFD -> NFC)
+    # Это помогает привести символы, которые могут быть представлены по-разному, к единому виду.
     name = unicodedata.normalize('NFC', name)
     
-    # Удаляем невидимые символы и заменяем множественные пробелы
+    # Удаляем невидимые пробелы и заменяем множественные пробелы на одиночные
     name = re.sub(r'\s+', ' ', name.strip())
     
     # Заменяем пробелы на подчеркивания и приводим к нижнему регистру
     name = name.replace(' ', '_').lower()
     
-    # Удаляем все не-ASCII символы, которые могут вызвать проблемы
+    # Удаляем все не-ASCII символы, которые могут вызвать проблемы в старых системах или путях
+    # Используем 'ignore', чтобы просто отбросить их, не вызывая ошибок.
     name = name.encode('ascii', 'ignore').decode('ascii')
     
     return name
@@ -254,25 +257,19 @@ def solve_layout(sheet_url, task_file_path):
     positions = {}
     equipment_by_name = {}
 
-    # УСИЛЕННАЯ ДИАГНОСТИКА: Создание словарей с отладочными выводами
-    print("  > ДИАГНОСТИКА: Создание словарей оборудования...")
+    # УСИЛЕННАЯ ДИАГНОСТИКА И НОРМАЛИЗАЦИЯ: Создание словарей с отладочными выводами
+    print("  > ДИАГНОСТИКА: Создание словарей оборудования и нормализация имен из task.json...")
     for item in equipment_list:
         original_name = item['name']
         key = normalize_name(original_name)
         equipment_by_name[key] = item
+        positions[key] = {
+            'x': model.NewIntVar(min_x_room_inner, max_x_room_inner - int(item['width'] * SCALE), f"x_{key}"),
+            'y': model.NewIntVar(min_y_room_inner, max_y_room_inner - int(item['depth'] * SCALE), f"y_{key}")
+        }
         print(f"    - Оригинальное имя: {repr(original_name)} -> Нормализованное: {repr(key)}")
     
     print(f"  > DEBUG: Normalized names from task.json: {[repr(key) for key in equipment_by_name.keys()]}")
-    
-    for item in equipment_list:
-        key = normalize_name(item['name'])
-        item_width_scaled = int(item['width'] * SCALE)
-        item_depth_scaled = int(item['depth'] * SCALE)
-
-        positions[key] = {
-            'x': model.NewIntVar(min_x_room_inner, max_x_room_inner - item_width_scaled, f"x_{key}"),
-            'y': model.NewIntVar(min_y_room_inner, max_y_room_inner - item_depth_scaled, f"y_{key}")
-        }
 
     # Ограничение "No Overlap" для оборудования
     intervals_x = [
@@ -301,156 +298,150 @@ def solve_layout(sheet_url, task_file_path):
     group_rules = []
     
     for _, rule in rules_df.iterrows():
-        rule_type = rule['Тип правила']
-        obj1_name = rule['Объект1']
-        obj2_name = rule.get('Объект2', '')
+        rule_type = rule['Тип правила'].strip()
+        obj1_name_orig = rule['Объект1'].strip()
+        obj2_name_orig = rule.get('Объект2', '').strip()
         value_str = str(rule['Значение']).strip()
-        
+
         # УСИЛЕННАЯ ДИАГНОСТИКА: Отладка правил
-        obj1_key = normalize_name(obj1_name) if obj1_name else ""
-        obj2_key = normalize_name(obj2_name) if obj2_name else ""
+        obj1_key = normalize_name(obj1_name_orig)
+        obj2_key = normalize_name(obj2_name_orig)
         
-        print(f"  > DEBUG: Rule '{rule_type}': obj1_orig={repr(obj1_name)} -> obj1_norm={repr(obj1_key)}")
-        if obj2_name:
-            print(f"    obj2_orig={repr(obj2_name)} -> obj2_norm={repr(obj2_key)}")
+        print(f"  > DEBUG: Rule '{rule_type}': obj1_orig={repr(obj1_name_orig)} -> obj1_norm={repr(obj1_key)}")
+        if obj2_name_orig:
+            print(f"    obj2_orig={repr(obj2_name_orig)} -> obj2_norm={repr(obj2_key)}")
 
-        # СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ ПРАВИЛ БЕЗ ПОИСКА ОБЪЕКТОВ
-        if rule_type in ['Запретная зона', 'Коридор']:
-            # Эти правила НЕ ищут объекты по имени - они применяются ко всему оборудованию
-            
-            if rule_type == 'Запретная зона':
-                try:
-                    x_min, y_min, x_max, y_max = map(float, value_str.split(','))
-                except Exception:
-                    print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение запретной зоны '{obj1_name}'. Ожидается 'Xmin,Ymin,Xmax,Ymax'.")
-                    continue
-
-                x_min_s = int(round(x_min * SCALE))
-                y_min_s = int(round(y_min * SCALE))
-                x_max_s = int(round(x_max * SCALE))
-                y_max_s = int(round(y_max * SCALE))
-
-                zone_safe = obj1_name.replace(' ', '_')
-                print(f"    - ПРАВИЛО: Запретная зона '{obj1_name}' в области [{x_min}, {y_min}] - [{x_max}, {y_max}].")
-                applied_rules.append(f"Запретная зона {obj1_name} [{x_min},{y_min},{x_max},{y_max}]")
-
-                # Применяем ко всему оборудованию
-                for item in equipment_list:
-                    iname = normalize_name(item['name'])
-                    width_s = int(item['width'] * SCALE)
-                    depth_s = int(item['depth'] * SCALE)
-
-                    left = model.NewBoolVar(f"{iname}_left_of_{zone_safe}")
-                    right = model.NewBoolVar(f"{iname}_right_of_{zone_safe}")
-                    below = model.NewBoolVar(f"{iname}_below_{zone_safe}")
-                    above = model.NewBoolVar(f"{iname}_above_{zone_safe}")
-
-                    model.Add(positions[iname]['x'] + width_s <= x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
-                    model.Add(positions[iname]['x'] >= x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
-                    model.Add(positions[iname]['y'] + depth_s <= y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
-                    model.Add(positions[iname]['y'] >= y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
-
-                    model.AddBoolOr([left, right, below, above])
+        # СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ ПРАВИЛ БЕЗ ПОИСКА ОБЪЕКТОВ (Зоны/Коридоры применяются ко ВСЕМ объектам)
+        if rule_type == 'Запретная зона':
+            try:
+                x_min, y_min, x_max, y_max = map(float, value_str.split(','))
+            except Exception:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение запретной зоны '{obj1_name_orig}'. Ожидается 'Xmin,Ymin,Xmax,Ymax'.")
                 continue
 
-            elif rule_type == 'Коридор':
-                try:
-                    x1, y1, x2, y2, width = map(float, value_str.split(','))
-                except Exception:
-                    print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение коридора. Ожидается 'X1,Y1,X2,Y2,Ширина'.")
-                    continue
+            x_min_s = int(round(x_min * SCALE))
+            y_min_s = int(round(y_min * SCALE))
+            x_max_s = int(round(x_max * SCALE))
+            y_max_s = int(round(y_max * SCALE))
 
-                # Создаем запретную зону в виде прямоугольника коридора
-                corridor_x_min = min(x1, x2) - width/2
-                corridor_x_max = max(x1, x2) + width/2
-                corridor_y_min = min(y1, y2) - width/2
-                corridor_y_max = max(y1, y2) + width/2
+            zone_safe_name = obj1_name_orig.replace(' ', '_') # Используем оригинальное имя для читаемости в логах
+            print(f"    - ПРАВИЛО: Запретная зона '{obj1_name_orig}' в области [{x_min}, {y_min}] - [{x_max}, {y_max}].")
+            applied_rules.append(f"Запретная зона {obj1_name_orig} [{x_min},{y_min},{x_max},{y_max}]")
 
-                corridor_x_min_s = int(corridor_x_min * SCALE)
-                corridor_x_max_s = int(corridor_x_max * SCALE)
-                corridor_y_min_s = int(corridor_y_min * SCALE)
-                corridor_y_max_s = int(corridor_y_max * SCALE)
+            for item in equipment_list: # Применяем ко ВСЕМ объектам оборудования
+                iname = normalize_name(item['name'])
+                width_s = int(item['width'] * SCALE)
+                depth_s = int(item['depth'] * SCALE)
 
-                print(f"    - ПРАВИЛО: Коридор от ({x1}, {y1}) до ({x2}, {y2}) шириной {width}м.")
-                applied_rules.append(f"Коридор ({x1},{y1})->({x2},{y2}) width {width}")
+                left = model.NewBoolVar(f"{iname}_left_of_{zone_safe_name}")
+                right = model.NewBoolVar(f"{iname}_right_of_{zone_safe_name}")
+                below = model.NewBoolVar(f"{iname}_below_{zone_safe_name}")
+                above = model.NewBoolVar(f"{iname}_above_{zone_safe_name}")
 
-                # Применяем ко всему оборудованию
-                for item in equipment_list:
-                    iname = normalize_name(item['name'])
-                    width_s = int(item['width'] * SCALE)
-                    depth_s = int(item['depth'] * SCALE)
+                model.Add(positions[iname]['x'] + width_s <= x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
+                model.Add(positions[iname]['x'] >= x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
+                model.Add(positions[iname]['y'] + depth_s <= y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
+                model.Add(positions[iname]['y'] >= y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
 
-                    left = model.NewBoolVar(f"{iname}_left_of_corridor")
-                    right = model.NewBoolVar(f"{iname}_right_of_corridor")
-                    below = model.NewBoolVar(f"{iname}_below_corridor")
-                    above = model.NewBoolVar(f"{iname}_above_corridor")
+                model.AddBoolOr([left, right, below, above])
+            continue # Переходим к следующему правилу, так как эта зона обработана
 
-                    model.Add(positions[iname]['x'] + width_s <= corridor_x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
-                    model.Add(positions[iname]['x'] >= corridor_x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
-                    model.Add(positions[iname]['y'] + depth_s <= corridor_y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
-                    model.Add(positions[iname]['y'] >= corridor_y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
-
-                    model.AddBoolOr([left, right, below, above])
+        elif rule_type == 'Коридор':
+            try:
+                x1, y1, x2, y2, width = map(float, value_str.split(','))
+            except Exception:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение коридора для '{obj1_name_orig}'. Ожидается 'X1,Y1,X2,Y2,Ширина'.")
                 continue
 
-        # ПРАВИЛА, ТРЕБУЮЩИЕ ПОИСКА ОБЪЕКТОВ
+            corridor_x_min = min(x1, x2) - width/2
+            corridor_x_max = max(x1, x2) + width/2
+            corridor_y_min = min(y1, y2) - width/2
+            corridor_y_max = max(y1, y2) + width/2
+
+            corridor_x_min_s = int(corridor_x_min * SCALE)
+            corridor_x_max_s = int(corridor_x_max * SCALE)
+            corridor_y_min_s = int(corridor_y_min * SCALE)
+            corridor_y_max_s = int(corridor_y_max * SCALE)
+
+            print(f"    - ПРАВИЛО: Коридор от ({x1}, {y1}) до ({x2}, {y2}) шириной {width}м.")
+            applied_rules.append(f"Коридор ({x1},{y1})->({x2},{y2}) width {width}")
+
+            for item in equipment_list: # Применяем ко ВСЕМ объектам оборудования
+                iname = normalize_name(item['name'])
+                width_s = int(item['width'] * SCALE)
+                depth_s = int(item['depth'] * SCALE)
+
+                left = model.NewBoolVar(f"{iname}_left_of_corridor")
+                right = model.NewBoolVar(f"{iname}_right_of_corridor")
+                below = model.NewBoolVar(f"{iname}_below_corridor")
+                above = model.NewBoolVar(f"{iname}_above_corridor")
+
+                model.Add(positions[iname]['x'] + width_s <= corridor_x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
+                model.Add(positions[iname]['x'] >= corridor_x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
+                model.Add(positions[iname]['y'] + depth_s <= corridor_y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
+                model.Add(positions[iname]['y'] >= corridor_y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
+
+                model.AddBoolOr([left, right, below, above])
+            continue # Переходим к следующему правилу, так как этот коридор обработан
+
+        # ОБРАБОТКА ПРАВИЛ, ТРЕБУЮЩИХ ПОИСКА КОНКРЕТНЫХ ОБЪЕКТОВ
+        if obj1_key not in positions:
+            print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name_orig}' (нормал. {repr(obj1_key)}) из правила не найден в task.json. Пропускаем правило.")
+            print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
+            continue
+
+        obj1_data = equipment_by_name[obj1_key] # Получаем данные объекта по нормализованному ключу
+
         if rule_type == 'Технологическая последовательность':
-            if obj1_key not in positions or obj2_key not in positions:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Один из объектов '{obj1_name}' или '{obj2_name}' не найден.")
-                print(f"      Доступные объекты: {list(positions.keys())}")
+            if obj2_key not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила не найден в task.json. Пропускаем правило.")
+                print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
                 continue
 
-            obj1_data = equipment_by_name[obj1_key]
             obj2_data = equipment_by_name[obj2_key]
-            direction = rule.get('Направление', 'Y').strip()
-
+            direction = rule.get('Направление', 'Y').strip() # по умолчанию поток по Y
+            
             if direction == 'Y':
                 obj1_end_y = positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE)
                 obj2_start_y = positions[obj2_key]['y']
-                model.Add(obj1_end_y + int(2.0 * SCALE) <= obj2_start_y)
-            else:
+                model.Add(obj1_end_y + int(2.0 * SCALE) <= obj2_start_y) # минимум 2м между объектами
+            else: # direction == 'X'
                 obj1_end_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE)
                 obj2_start_x = positions[obj2_key]['x']
                 model.Add(obj1_end_x + int(2.0 * SCALE) <= obj2_start_x)
 
-            print(f"    - ПРАВИЛО: Технологическая последовательность '{obj1_name}' -> '{obj2_name}' по оси {direction}.")
-            applied_rules.append(f"Техпоследовательность {obj1_name}->{obj2_name} {direction}")
+            print(f"    - ПРАВИЛО: Технологическая последовательность '{obj1_name_orig}' -> '{obj2_name_orig}' по оси {direction}.")
+            applied_rules.append(f"Техпоследовательность {obj1_name_orig}->{obj2_name_orig} {direction}")
             flow_pairs.append((obj1_key, obj2_key))
 
         elif rule_type == 'Производственная зона':
-            if obj1_key not in positions:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' не найден.")
-                print(f"      Доступные объекты: {list(positions.keys())}")
-                continue
-
             try:
                 x_min, y_min, x_max, y_max = map(float, value_str.split(','))
             except Exception:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение зоны для '{obj1_name}'.")
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение зоны для '{obj1_name_orig}'. Ожидается 'Xmin,Ymin,Xmax,Ymax'.")
                 continue
 
-            obj_data = equipment_by_name[obj1_key]
             x_min_s = int(x_min * SCALE)
             y_min_s = int(y_min * SCALE)
             x_max_s = int(x_max * SCALE)
             y_max_s = int(y_max * SCALE)
             
+            # Объект должен полностью помещаться в зону
             model.Add(positions[obj1_key]['x'] >= x_min_s)
             model.Add(positions[obj1_key]['y'] >= y_min_s)
-            model.Add(positions[obj1_key]['x'] + int(obj_data['width'] * SCALE) <= x_max_s)
-            model.Add(positions[obj1_key]['y'] + int(obj_data['depth'] * SCALE) <= y_max_s)
+            model.Add(positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE) <= x_max_s)
+            model.Add(positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE) <= y_max_s)
 
-            print(f"    - ПРАВИЛО: Объект '{obj1_name}' ограничен зоной [{x_min}, {y_min}] - [{x_max}, {y_max}].")
-            applied_rules.append(f"Производственная зона для {obj1_name} [{x_min},{y_min},{x_max},{y_max}]")
+            print(f"    - ПРАВИЛО: Объект '{obj1_name_orig}' ограничен зоной [{x_min}, {y_min}] - [{x_max}, {y_max}].")
+            applied_rules.append(f"Производственная зона для {obj1_name_orig} [{x_min},{y_min},{x_max},{y_max}]")
 
         elif rule_type == 'Параллельная линия':
-            if obj1_key not in positions or obj2_key not in positions:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Один из объектов '{obj1_name}' или '{obj2_name}' не найден.")
-                print(f"      Доступные объекты: {list(positions.keys())}")
+            if obj2_key not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила не найден в task.json. Пропускаем правило.")
+                print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
                 continue
 
             offset = float(value_str) if value_str else 0.0
-            obj1_data = equipment_by_name[obj1_key]
             obj2_data = equipment_by_name[obj2_key]
 
             center1_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE / 2)
@@ -458,33 +449,272 @@ def solve_layout(sheet_url, task_file_path):
             
             model.Add(center2_x == center1_x + int(offset * SCALE))
 
-            print(f"    - ПРАВИЛО: Параллельная линия '{obj1_name}' и '{obj2_name}' со смещением {offset}м.")
-            applied_rules.append(f"Параллельная линия {obj1_name}-{obj2_name} offset {offset}")
+            print(f"    - ПРАВИЛО: Параллельная линия '{obj1_name_orig}' и '{obj2_name_orig}' со смещением {offset}м.")
+            applied_rules.append(f"Параллельная линия {obj1_name_orig}-{obj2_name_orig} offset {offset}")
 
         elif rule_type == 'Привязка к стене':
-            if obj1_key not in positions:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj1_name}' не найден.")
-                print(f"      Доступные объекты: {list(positions.keys())}")
-                continue
-            
             try:
                 side, dist = value_str.split(',')
                 dist = float(dist)
             except Exception:
-                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение привязки к стене для '{obj1_name}'.")
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение привязки к стене для '{obj1_name_orig}'.")
                 continue
             
             pos = positions[obj1_key]
-            obj_data = equipment_by_name[obj1_key]
             
             if side == 'Xmin':
                 model.Add(pos['x'] == int((dist + wall_thickness) * SCALE))
             elif side == 'Xmax':
-                model.Add(pos['x'] + int(obj_data['width'] * SCALE) == int((room_width - wall_thickness - dist) * SCALE))
+                model.Add(pos['x'] + int(obj1_data['width'] * SCALE) == int((room_width - wall_thickness - dist) * SCALE))
             elif side == 'Ymin':
                 model.Add(pos['y'] == int((dist + wall_thickness) * SCALE))
             elif side == 'Ymax':
-                model.Add(pos['y'] + int(obj_data['depth'] * SCALE) == int((room_depth - wall_thickness - dist) * SCALE))
+                model.Add(pos['y'] + int(obj1_data['depth'] * SCALE) == int((room_depth - wall_thickness - dist) * SCALE))
             
-            print(f"    - ПРАВИЛО: Привязка '{obj1_name}' к стене {side} с отступом {dist}м.")
-            applied_rules.append(f"Привязка {obj1_name} {side
+            print(f"    - ПРАВИЛО: Привязка '{obj1_name_orig}' к стене {side} с отступом {dist}м.")
+            applied_rules.append(f"Привязка {obj1_name_orig} {side} {dist}")
+
+        elif rule_type == 'Зона обслуживания':
+            try:
+                margin = float(value_str)
+            except Exception:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение зоны обслуживания для '{obj1_name_orig}'.")
+                continue
+            
+            for other_item in equipment_list: # Применяем ко ВСЕМ ДРУГИМ объектам оборудования
+                other_key = normalize_name(other_item['name'])
+                if other_key == obj1_key:
+                    continue # Пропускаем сам объект
+
+                other_data = equipment_by_name[other_key]
+                center1_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE / 2)
+                center1_y = positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE / 2)
+                center2_x = positions[other_key]['x'] + int(other_data['width'] * SCALE / 2)
+                center2_y = positions[other_key]['y'] + int(other_data['depth'] * SCALE / 2)
+                
+                dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"svc_dx_{obj1_key}_{other_key}")
+                dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"svc_dy_{obj1_key}_{other_key}")
+                model.Add(dx == center1_x - center2_x)
+                model.Add(dy == center1_y - center2_y)
+                dx2 = model.NewIntVar(0, int(room_width * SCALE) ** 2, f"svc_dx2_{obj1_key}_{other_key}")
+                dy2 = model.NewIntVar(0, int(room_depth * SCALE) ** 2, f"svc_dy2_{obj1_key}_{other_key}")
+                model.AddMultiplicationEquality(dx2, dx, dx)
+                model.AddMultiplicationEquality(dy2, dy, dy)
+                min_sq = int((margin * SCALE) ** 2)
+                model.Add(dx2 + dy2 >= min_sq)
+            applied_rules.append(f"Зона обслуживания {obj1_name_orig} {margin}")
+
+        elif rule_type == 'Компактная группировка':
+            group_raw = [s.strip() for s in value_str.split(';') if s.strip()]
+            group_keys = [normalize_name(s) for s in group_raw]
+            if obj1_name_orig.strip(): # Если obj1_name также указан для группы
+                group_keys.append(obj1_key)
+            
+            missing = [g for g in group_keys if g not in positions]
+            if missing:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объекты {missing} не найдены для группировки.")
+                print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
+                continue
+            group_rules.append(group_keys)
+            print(f"    - ПРАВИЛО: Компактная группировка {group_raw}.")
+            applied_rules.append(f"Группировка {';'.join(group_raw)}")
+
+        elif rule_type == 'Ориентация':
+            try:
+                angle = float(value_str)
+            except Exception:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Некорректное значение ориентации для '{obj1_name_orig}'.")
+                continue
+            equipment_by_name[obj1_key]['rotation_deg'] = angle
+            print(f"    - ПРАВИЛО: Ориентация '{obj1_name_orig}' = {angle}°")
+            applied_rules.append(f"Ориентация {obj1_name_orig} {angle}")
+
+        elif rule_type == 'Мин. расстояние до':
+            if obj2_key not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила не найден в task.json. Пропускаем правило.")
+                print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
+                continue
+
+            obj2_data = equipment_by_name[obj2_key]
+            value = float(value_str) if value_str else 0.0
+            value_scaled = int(value * SCALE)
+
+            center1_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE / 2)
+            center1_y = positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE / 2)
+            center2_x = positions[obj2_key]['x'] + int(obj2_data['width'] * SCALE / 2)
+            center2_y = positions[obj2_key]['y'] + int(obj2_data['depth'] * SCALE / 2)
+
+            dx = model.NewIntVar(-int(room_width * SCALE), int(room_width * SCALE), f"dx_{obj1_key}_{obj2_key}")
+            dy = model.NewIntVar(-int(room_depth * SCALE), int(room_depth * SCALE), f"dy_{obj1_key}_{obj2_key}")
+            model.Add(dx == center1_x - center2_x)
+            model.Add(dy == center1_y - center2_y)
+
+            dx2 = model.NewIntVar(0, int(room_width * SCALE) ** 2, f"dx2_{obj1_key}_{obj2_key}")
+            dy2 = model.NewIntVar(0, int(room_depth * SCALE) ** 2, f"dy2_{obj1_key}_{obj2_key}")
+            model.AddMultiplicationEquality(dx2, dx, dx)
+            model.AddMultiplicationEquality(dy2, dy, dy)
+
+            dist_sq_scaled = value_scaled**2
+            model.Add(dx2 + dy2 >= dist_sq_scaled)
+            print(f"    - ПРАВИЛО: Расстояние между '{obj1_name_orig}' и '{obj2_name_orig}' >= {value}м.")
+            applied_rules.append(f"Мин. расстояние {obj1_name_orig}-{obj2_name_orig} {value}")
+
+        elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
+            if obj2_key not in positions:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила не найден в task.json. Пропускаем правило.")
+                print(f"      Доступные нормализованные объекты: {list(positions.keys())}")
+                continue
+
+            obj2_data = equipment_by_name[obj2_key]
+
+            center1_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE / 2)
+            center1_y = positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE / 2)
+            center2_x = positions[obj2_key]['x'] + int(obj2_data['width'] * SCALE / 2)
+            center2_y = positions[obj2_key]['y'] + int(obj2_data['depth'] * SCALE / 2)
+
+            if rule_type == 'Выровнять по оси X':
+                model.Add(center1_x == center2_x)
+                axis = 'X'
+            else:
+                model.Add(center1_y == center2_y)
+                axis = 'Y'
+            print(f"    - ПРАВИЛО: Выровнять '{obj1_name_orig}' и '{obj2_name_orig}' по оси {axis}.")
+            applied_rules.append(f"Выровнять {obj1_name_orig}-{obj2_name_orig} axis {axis}")
+
+        else:
+            print(f"    - [НЕИЗВЕСТНО] Тип правила '{rule_type}' не поддерживается решателем.")
+
+
+    # ЦЕЛЕВАЯ ФУНКЦИЯ ДЛЯ ОПТИМИЗАЦИИ КОМПАКТНОСТИ, ПОТОКА И ГРУППИРОВКИ
+    print("  > Добавление целевой функции для компактности, потока и группировки...")
+    
+    total_x_spread = model.NewIntVar(0, int(room_width * SCALE), "total_x_spread")
+    total_y_spread = model.NewIntVar(0, int(room_depth * SCALE), "total_y_spread")
+    
+    if equipment_list:
+        min_x_all = model.NewIntVar(min_x_room_inner, max_x_room_inner, "min_x_all")
+        max_x_all = model.NewIntVar(min_x_room_inner, max_x_room_inner, "max_x_all")
+        min_y_all = model.NewIntVar(min_y_room_inner, max_y_room_inner, "min_y_all")
+        max_y_all = model.NewIntVar(min_y_room_inner, max_y_room_inner, "min_y_all")
+
+        for item in equipment_list:
+            key = normalize_name(item['name'])
+            model.Add(min_x_all <= positions[key]['x'])
+            model.Add(max_x_all >= positions[key]['x'] + int(item['width'] * SCALE))
+            model.Add(min_y_all <= positions[key]['y'])
+            model.Add(max_y_all >= positions[key]['y'] + int(item['depth'] * SCALE))
+
+        model.Add(total_x_spread == max_x_all - min_x_all)
+        model.Add(total_y_spread == max_y_all - min_y_all)
+    else:
+        model.Add(total_x_spread == 0)
+        model.Add(total_y_spread == 0)
+
+    flow_cost = sum(model.NewIntVar(0, int(room_width * SCALE + room_depth * SCALE), f"flow_cost_{a}_{b}") for a, b in flow_pairs)
+    for a, b in flow_pairs:
+        a_data = equipment_by_name[a]
+        b_data = equipment_by_name[b]
+        a_cx = positions[a]['x'] + int(a_data['width'] * SCALE / 2)
+        a_cy = positions[a]['y'] + int(a_data['depth'] * SCALE / 2)
+        b_cx = positions[b]['x'] + int(b_data['width'] * SCALE / 2)
+        b_cy = positions[b]['y'] + int(b_data['depth'] * SCALE / 2)
+        dx_abs = model.NewIntVar(0, int(room_width * SCALE), f"flow_dx_abs_{a}_{b}")
+        dy_abs = model.NewIntVar(0, int(room_depth * SCALE), f"flow_dy_abs_{a}_{b}")
+        model.AddAbsEquality(dx_abs, a_cx - b_cx)
+        model.AddAbsEquality(dy_abs, a_cy - b_cy)
+        model.Add(flow_cost >= dx_abs + dy_abs) # Минимизируем сумму абсолютных отклонений
+
+    group_cost = sum(model.NewIntVar(0, int(room_width * SCALE + room_depth * SCALE), f"group_cost_{g_idx}_{i}_{j}") 
+                     for g_idx, g in enumerate(group_rules) for i in range(len(g)) for j in range(i + 1, len(g)))
+    for g_idx, g in enumerate(group_rules):
+        if len(g) < 2:
+            continue
+        for i in range(len(g)):
+            for j in range(i + 1, len(g)):
+                a = g[i]
+                b = g[j]
+                a_data = equipment_by_name[a]
+                b_data = equipment_by_name[b]
+                a_cx = positions[a]['x'] + int(a_data['width'] * SCALE / 2)
+                a_cy = positions[a]['y'] + int(a_data['depth'] * SCALE / 2)
+                b_cx = positions[b]['x'] + int(b_data['width'] * SCALE / 2)
+                b_cy = positions[b]['y'] + int(b_data['depth'] * SCALE / 2)
+                dx_abs = model.NewIntVar(0, int(room_width * SCALE), f"grp_dx_abs_{a}_{b}")
+                dy_abs = model.NewIntVar(0, int(room_depth * SCALE), f"grp_dy_abs_{a}_{b}")
+                model.AddAbsEquality(dx_abs, a_cx - b_cx)
+                model.AddAbsEquality(dy_abs, a_cy - b_cy)
+                model.Add(group_cost >= dx_abs + dy_abs) # Минимизируем сумму абсолютных отклонений
+
+    model.Minimize(total_x_spread + total_y_spread + flow_cost + group_cost) # Общая целевая функция
+
+    print("3. Запуск решателя OR-Tools...")
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 120.0 # Увеличим время для более сложных задач
+    solver.parameters.num_workers = os.cpu_count() or 1 # Используем все ядра CPU
+    solver.parameters.log_search_progress = True # Включим логирование прогресса для отладки
+    
+    status = solver.Solve(model)
+    print(f"  > Статус решателя: {solver.StatusName(status)}")
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  > Решение найдено!")
+        final_placements = []
+        for item in equipment_list:
+            key = normalize_name(item['name'])
+            # Проверяем, было ли размещено данное оборудование (если solver.Value() не выдает ошибки)
+            if key in positions and hasattr(solver, 'Value'): # Проверяем наличие 'Value' на solver
+                try:
+                    updated_rot = equipment_by_name[key].get('rotation_deg', item.get('rotation_deg', 0.0))
+                    final_placements.append({
+                        'name': item['name'],
+                        'x': solver.Value(positions[key]['x']) / SCALE,
+                        'y': solver.Value(positions[key]['y']) / SCALE,
+                        'width': item['width'],
+                        'depth': item['depth'],
+                        'height': item['height'],
+                        'rotation_deg': updated_rot,
+                        'model_path': item.get('model_path'),
+                        'attributes': item.get('attributes', {})
+                    })
+                except Exception as e:
+                    print(f"    - ПРЕДУПРЕЖДЕНИЕ: Не удалось получить значение для объекта '{item['name']}' из решателя: {e}")
+                    # В случае ошибки, возможно, объект не был размещен. Пропустим его или используем дефолтные значения.
+                    pass
+            else:
+                print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объект '{item['name']}' не был включен в решение решателя (не найдена позиция).")
+                # Если объект не был размещен, его не будет в final_placements
+                pass
+
+        placed_names = [p['name'] for p in final_placements]
+        print(f"  > Размещено объектов: {len(placed_names)} из {len(equipment_list)}")
+        print("    - " + ", ".join(placed_names))
+        
+        # Только если есть размещенные объекты, создаем IFC файл
+        if final_placements:
+            create_ifc_file(task_data, final_placements)
+        else:
+            print("  > ВНИМАНИЕ: Нет размещенных объектов для создания IFC файла.")
+    else:
+        print("  > ОШИБКА: Не удалось найти решение. Проверьте, не противоречат ли правила друг другу или слишком ли тесное помещение.")
+        if applied_rules:
+            print("    > Возможно, конфликтуют следующие правила:")
+            for r in applied_rules:
+                print(f"      - {r}")
+        if status == cp_model.INFEASIBLE:
+            print("    > Статус решателя: INFEASIBLE (Неразрешимо). Правила противоречат друг другу или нет места.")
+        elif status == cp_model.MODEL_INVALID:
+            print("    > Статус решателя: MODEL_INVALID (Модель неверна). Внутренняя ошибка модели CP-SAT.")
+        elif status == cp_model.UNKNOWN:
+            print("    > Статус решателя: UNKNOWN (Решение не найдено в отведенное время, или возникла другая проблема).")
+        else:
+            print(f"    > Неизвестный статус решателя: {solver.StatusName(status)}")
+
+    print("--- ПРОЦЕСС ПРОЕКТИРОВАНИЯ ЗАВЕРШЕН ---")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python layout_solver.py <URL_Google_Таблицы> <путь_к_task.json>\n")
+    else:
+        google_sheet_url = sys.argv[1]
+        task_json_path = sys.argv[2]
+        solve_layout(google_sheet_url, task_json_path)
