@@ -266,6 +266,7 @@ def solve_layout(sheet_url, task_file_path):
     model = cp_model.CpModel()
     SCALE = 1000  # Масштабирование для работы с целыми числами
     ZONE_MARGIN = 1  # 1 мм для строгого исключения из запретных зон
+    SOFT_PENALTY_WEIGHT = 100  # Коэффициент штрафов за мягкие ограничения
 
     wall_thickness = 0.2
     min_x_room_inner = int(wall_thickness * SCALE)
@@ -315,6 +316,10 @@ def solve_layout(sheet_url, task_file_path):
     applied_rules = []
     flow_pairs = []
     group_rules = []
+    # Списки мягких штрафов для целевой функции
+    seq_penalties = []
+    zone_penalties = []
+    corridor_penalties = []
     
     for _, rule in rules_df.iterrows():
         rule_type = rule['Тип правила'].strip()
@@ -385,7 +390,7 @@ def solve_layout(sheet_url, task_file_path):
             print(f"    - ПРАВИЛО: Коридор от ({x1}, {y1}) до ({x2}, {y2}) шириной {width}м.")
             applied_rules.append(f"Коридор ({x1},{y1})->({x2},{y2}) width {width}")
 
-            for item in equipment_list: # Применяем ко ВСЕМ объектам оборудования
+            for item in equipment_list:  # Применяем ко ВСЕМ объектам оборудования
                 iname = normalize_name(item['name'])
                 width_s = int(item['width'] * SCALE)
                 depth_s = int(item['depth'] * SCALE)
@@ -394,13 +399,16 @@ def solve_layout(sheet_url, task_file_path):
                 right = model.NewBoolVar(f"{iname}_right_of_corridor")
                 below = model.NewBoolVar(f"{iname}_below_corridor")
                 above = model.NewBoolVar(f"{iname}_above_corridor")
+                viol = model.NewBoolVar(f"{iname}_corridor_violation")
 
                 model.Add(positions[iname]['x'] + width_s <= corridor_x_min_s - ZONE_MARGIN).OnlyEnforceIf(left)
                 model.Add(positions[iname]['x'] >= corridor_x_max_s + ZONE_MARGIN).OnlyEnforceIf(right)
                 model.Add(positions[iname]['y'] + depth_s <= corridor_y_min_s - ZONE_MARGIN).OnlyEnforceIf(below)
                 model.Add(positions[iname]['y'] >= corridor_y_max_s + ZONE_MARGIN).OnlyEnforceIf(above)
 
-                model.AddBoolOr([left, right, below, above])
+                # Если объект пересекает коридор, переменная viol будет равна 1
+                model.AddBoolOr([left, right, below, above, viol])
+                corridor_penalties.append(viol)
             continue # Переходим к следующему правилу, так как этот коридор обработан
 
         # ОБРАБОТКА ПРАВИЛ, ТРЕБУЮЩИХ ПОИСКА КОНКРЕТНЫХ ОБЪЕКТОВ
@@ -419,15 +427,19 @@ def solve_layout(sheet_url, task_file_path):
 
             obj2_data = equipment_by_name[obj2_key]
             direction = rule.get('Направление', 'Y').strip() # по умолчанию поток по Y
-            
+
             if direction == 'Y':
                 obj1_end_y = positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE)
                 obj2_start_y = positions[obj2_key]['y']
-                model.Add(obj1_end_y + int(2.0 * SCALE) <= obj2_start_y) # минимум 2м между объектами
+                viol = model.NewIntVar(0, int(room_depth * SCALE), f"seq_viol_{obj1_key}_{obj2_key}")
+                model.Add(viol >= obj1_end_y + int(2.0 * SCALE) - obj2_start_y)
+                seq_penalties.append(viol)
             else: # direction == 'X'
                 obj1_end_x = positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE)
                 obj2_start_x = positions[obj2_key]['x']
-                model.Add(obj1_end_x + int(2.0 * SCALE) <= obj2_start_x)
+                viol = model.NewIntVar(0, int(room_width * SCALE), f"seq_viol_{obj1_key}_{obj2_key}")
+                model.Add(viol >= obj1_end_x + int(2.0 * SCALE) - obj2_start_x)
+                seq_penalties.append(viol)
 
             print(f"    - ПРАВИЛО: Технологическая последовательность '{obj1_name_orig}' -> '{obj2_name_orig}' по оси {direction}.")
             applied_rules.append(f"Техпоследовательность {obj1_name_orig}->{obj2_name_orig} {direction}")
@@ -445,11 +457,22 @@ def solve_layout(sheet_url, task_file_path):
             x_max_s = int(x_max * SCALE)
             y_max_s = int(y_max * SCALE)
             
-            # Объект должен полностью помещаться в зону
-            model.Add(positions[obj1_key]['x'] >= x_min_s)
-            model.Add(positions[obj1_key]['y'] >= y_min_s)
-            model.Add(positions[obj1_key]['x'] + int(obj1_data['width'] * SCALE) <= x_max_s)
-            model.Add(positions[obj1_key]['y'] + int(obj1_data['depth'] * SCALE) <= y_max_s)
+            width_s = int(obj1_data['width'] * SCALE)
+            depth_s = int(obj1_data['depth'] * SCALE)
+
+            # Нарушение рассчитывается как выход за границы зоны
+            viol_left = model.NewIntVar(0, int(room_width * SCALE), f"zone_left_{obj1_key}")
+            viol_bottom = model.NewIntVar(0, int(room_depth * SCALE), f"zone_bottom_{obj1_key}")
+            viol_right = model.NewIntVar(0, int(room_width * SCALE), f"zone_right_{obj1_key}")
+            viol_top = model.NewIntVar(0, int(room_depth * SCALE), f"zone_top_{obj1_key}")
+
+            model.Add(viol_left >= x_min_s - positions[obj1_key]['x'])
+            model.Add(viol_bottom >= y_min_s - positions[obj1_key]['y'])
+            model.Add(viol_right >= positions[obj1_key]['x'] + width_s - x_max_s)
+            model.Add(viol_top >= positions[obj1_key]['y'] + depth_s - y_max_s)
+            zone_penalty = model.NewIntVar(0, int(max(room_width, room_depth) * SCALE * 4), f"zone_penalty_{obj1_key}")
+            model.Add(zone_penalty == viol_left + viol_bottom + viol_right + viol_top)
+            zone_penalties.append(zone_penalty)
 
             print(f"    - ПРАВИЛО: Объект '{obj1_name_orig}' ограничен зоной [{x_min}, {y_min}] - [{x_max}, {y_max}].")
             applied_rules.append(f"Производственная зона для {obj1_name_orig} [{x_min},{y_min},{x_max},{y_max}]")
@@ -664,11 +687,12 @@ def solve_layout(sheet_url, task_file_path):
                 model.AddAbsEquality(dy_abs, a_cy - b_cy)
                 model.Add(group_cost >= dx_abs + dy_abs) # Минимизируем сумму абсолютных отклонений
 
-    model.Minimize(total_x_spread + total_y_spread + flow_cost + group_cost) # Общая целевая функция
+    soft_penalty = sum(seq_penalties) + sum(zone_penalties) + sum(corridor_penalties) * int(max(room_width, room_depth) * SCALE)
+    model.Minimize(total_x_spread + total_y_spread + flow_cost + group_cost + SOFT_PENALTY_WEIGHT * soft_penalty) # Общая целевая функция
 
     print("3. Запуск решателя OR-Tools...")
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 120.0 # Увеличим время для более сложных задач
+    solver.parameters.max_time_in_seconds = 300.0  # Даем решателю до 5 минут на поиск решения
     solver.parameters.num_workers = os.cpu_count() or 1 # Используем все ядра CPU
     solver.parameters.log_search_progress = True # Включим логирование прогресса для отладки
     
