@@ -510,6 +510,44 @@ def solve_layout(sheet_url, task_file_path):
             if obj1_name_orig.strip(): # Если obj1_name также указан для группы
                 group_keys.append(obj1_key)
             
+ 2t3npj-codex/-layout_solver.py
+            print(f"    - ПРАВИЛО: Привязка '{obj1_name}' к стене {side} с отступом {dist}м.")
+            applied_rules.append(f"Привязка {obj1_name} {side} {dist}")
+
+        else:
+            print(f"    - ПРЕДУПРЕЖДЕНИЕ: Неизвестный тип правила '{rule_type}'.")
+
+    print("3. Запуск решателя...")
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 30.0
+    status = solver.Solve(model)
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  > Решение найдено.")
+        placements = []
+        for key, pos in positions.items():
+            item = equipment_by_name[key]
+            placements.append({
+                'name': item['name'],
+                'width': item['width'],
+                'depth': item['depth'],
+                'height': item.get('height', 0.0),
+                'x': solver.Value(pos['x']) / SCALE,
+                'y': solver.Value(pos['y']) / SCALE,
+                'rotation_deg': item.get('rotation_deg', 0.0)
+            })
+            print(f"    - {item['name']} -> ({solver.Value(pos['x']) / SCALE:.2f}, {solver.Value(pos['y']) / SCALE:.2f})")
+
+        create_ifc_file(task_data, placements)
+    else:
+        print('  > Решатель не смог найти решение.')
+
+
+if __name__ == '__main__':
+    sheet = sys.argv[1] if len(sys.argv) > 1 else ''
+    task_path = sys.argv[2] if len(sys.argv) > 2 else 'task.json'
+    solve_layout(sheet, task_path)
+=======
             missing = [g for g in group_keys if g not in positions]
             if missing:
                 print(f"    - ПРЕДУПРЕЖДЕНИЕ: Объекты {missing} не найдены для группировки.")
@@ -718,3 +756,4 @@ if __name__ == "__main__":
         google_sheet_url = sys.argv[1]
         task_json_path = sys.argv[2]
         solve_layout(google_sheet_url, task_json_path)
+main
