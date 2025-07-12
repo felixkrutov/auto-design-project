@@ -9,31 +9,50 @@ import os
 import math
 import re
 import unicodedata
+import hashlib
 
 def normalize_name(name: str) -> str:
-    """Усиленная нормализация имен для гарантированного соответствия."""
+    """Normalizes equipment names and produces deterministic ASCII identifiers.
+
+    In the original implementation Cyrillic characters were stripped which
+    resulted in different items mapping to the same ``__`` name.  The updated
+    algorithm transliterates characters to Latin, removes unsupported symbols
+    and appends a short hash of the original string to guarantee uniqueness.
+    """
+
     if not name:
         return ""
-    
-    # Удаляем Unicode-какатегории управляющих символов (Control Characters)
-    # Например, BOM, непечатаемые символы, которые могут быть в CSV из разных источников.
-    name = ''.join(c for c in name if unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Co', 'Cn'))
-    
-    # Нормализуем Unicode-представления (NFD -> NFC)
-    # Это помогает привести символы, которые могут быть представлены по-разному, к единому виду.
-    name = unicodedata.normalize('NFC', name)
-    
-    # Удаляем невидимые пробелы и заменяем множественные пробелы на одиночные
-    name = re.sub(r'\s+', ' ', name.strip())
-    
-    # Заменяем пробелы на подчеркивания и приводим к нижнему регистру
-    name = name.replace(' ', '_').lower()
-    
-    # Удаляем все не-ASCII символы, которые могут вызвать проблемы в старых системах или путях
-    # Используем 'ignore', чтобы просто отбросить их, не вызывая ошибок.
-    name = name.encode('ascii', 'ignore').decode('ascii')
-    
-    return name
+
+    # Remove control characters and normalize unicode representation
+    name_clean = ''.join(
+        c for c in name if unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Co', 'Cn')
+    )
+    name_clean = unicodedata.normalize('NFC', name_clean)
+    name_clean = re.sub(r'\s+', ' ', name_clean.strip())
+
+    # Simple transliteration for Cyrillic -> Latin characters
+    cyr_map = {
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'Kh', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Shch',
+        'Ы': 'Y', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya',
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
+        'ы': 'y', 'э': 'e', 'ю': 'yu', 'я': 'ya', 'ь': '', 'ъ': ''
+    }
+    transliterated = ''.join(cyr_map.get(ch, ch) for ch in name_clean)
+
+    transliterated = transliterated.replace(' ', '_').lower()
+    transliterated = re.sub(r'[^a-z0-9_]+', '', transliterated)
+
+    # Add short hash to keep identifier unique even if transliteration collides
+    digest = hashlib.sha1(name.encode('utf-8')).hexdigest()[:6]
+    if transliterated:
+        return f"{transliterated}_{digest}"
+    return digest
 
 def get_rules_from_google_sheet(sheet_url):
     """Загружает правила из Google Таблицы."""
@@ -583,26 +602,6 @@ def solve_layout(sheet_url, task_file_path):
 
         else:
             print(f"    - [НЕИЗВЕСТНО] Тип правила '{rule_type}' не поддерживается решателем.")
-
-    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("  > Решение найдено.")
-        placements = []
-        for key, pos in positions.items():
-            item = equipment_by_name[key]
-            placements.append({
-                'name': item['name'],
-                'width': item['width'],
-                'depth': item['depth'],
-                'height': item.get('height', 0.0),
-                'x': solver.Value(pos['x']) / SCALE,
-                'y': solver.Value(pos['y']) / SCALE,
-                'rotation_deg': item.get('rotation_deg', 0.0)
-            })
-            print(f"    - {item['name']} -> ({solver.Value(pos['x']) / SCALE:.2f}, {solver.Value(pos['y']) / SCALE:.2f})")
-
-        create_ifc_file(task_data, placements)
-    else:
-        print('  > Решатель не смог найти решение.')
 
 
     # ЦЕЛЕВАЯ ФУНКЦИЯ ДЛЯ ОПТИМИЗАЦИИ КОМПАКТНОСТИ, ПОТОКА И ГРУППИРОВКИ
