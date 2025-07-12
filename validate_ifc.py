@@ -3,6 +3,10 @@ import pandas as pd
 import sys
 import math
 
+def normalize_name(name: str) -> str:
+    """Normalize equipment names."""
+    return name.strip().replace(' ', '_').lower()
+
 def get_rules_from_google_sheet(sheet_url):
     """
     Загружает и парсит правила из общедоступной Google Таблицы.
@@ -86,10 +90,16 @@ def extract_placements_from_ifc(ifc_filename):
         min_x = center_x - (width / 2)
         min_y = center_y - (depth / 2)
 
+        rotation = 0.0
+        if hasattr(element.ObjectPlacement, "RelativePlacement") and element.ObjectPlacement.RelativePlacement.RefDirection:
+            dir_ratios = element.ObjectPlacement.RelativePlacement.RefDirection.DirectionRatios
+            rotation = math.degrees(math.atan2(dir_ratios[1], dir_ratios[0]))
+
         placements[name] = {
             'minX': min_x, 'minY': min_y,
             'centerX': center_x, 'centerY': center_y,
-            'width': width, 'depth': depth, 'height': height
+            'width': width, 'depth': depth, 'height': height,
+            'rotation_deg': rotation
         }
         # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
         
@@ -105,6 +115,7 @@ def validate_layout(rules_df, placements):
         print("  > ОШИБКА: Нет данных о размещениях для проверки.")
         return
 
+    placements_norm = {normalize_name(n): data for n, data in placements.items()}
     passed_rules, failed_rules = 0, 0
     
     for index, rule in rules_df.iterrows():
@@ -160,20 +171,22 @@ def validate_layout(rules_df, placements):
             actual_value_str = f"пересекает {violator}" if violator else "коридор свободен"
 
         else:
-            if obj1_name not in placements:
+            obj1_key = normalize_name(obj1_name)
+            if obj1_key not in placements_norm:
                 print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj1_name}' из правила #{index+1} не найден в IFC.")
                 continue
 
-            obj1 = placements[obj1_name]
+            obj1 = placements_norm[obj1_key]
 
             if rule_type == 'Мин. расстояние до':
                 obj2_name = rule['Объект2'].strip()
+                obj2_key = normalize_name(obj2_name)
                 value = float(value_str) if value_str else 0.0
-                if obj2_name not in placements:
+                if obj2_key not in placements_norm:
                     print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
                     continue
-                
-                obj2 = placements[obj2_name]
+
+                obj2 = placements_norm[obj2_key]
                 distance = math.sqrt((obj1['centerX'] - obj2['centerX'])**2 + (obj1['centerY'] - obj2['centerY'])**2)
                 
                 is_rule_passed = distance >= value
@@ -182,11 +195,12 @@ def validate_layout(rules_df, placements):
 
             elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
                 obj2_name = rule['Объект2'].strip()
-                if obj2_name not in placements:
+                obj2_key = normalize_name(obj2_name)
+                if obj2_key not in placements_norm:
                     print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
                     continue
 
-                obj2 = placements[obj2_name]
+                obj2 = placements_norm[obj2_key]
 
                 if rule_type == 'Выровнять по оси X':
                     is_rule_passed = math.isclose(obj1['centerX'], obj2['centerX'], abs_tol=0.001)
@@ -198,12 +212,12 @@ def validate_layout(rules_df, placements):
 
             elif rule_type == 'Технологическая последовательность':
                 obj2_name = rule['Объект2'].strip()
+                obj2_key = normalize_name(obj2_name)
                 direction = rule.get('Направление', 'Y').strip()
-                if obj2_name not in placements:
+                if obj2_key not in placements_norm:
                     print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
                     continue
-
-                obj2 = placements[obj2_name]
+                obj2 = placements_norm[obj2_key]
                 gap = 2.0
                 if direction == 'Y':
                     is_rule_passed = obj1['minY'] + obj1['depth'] <= obj2['minY'] - gap + 0.001
@@ -227,16 +241,27 @@ def validate_layout(rules_df, placements):
 
             elif rule_type == 'Параллельная линия':
                 obj2_name = rule['Объект2'].strip()
+                obj2_key = normalize_name(obj2_name)
                 offset = float(value_str) if value_str else 0.0
-                if obj2_name not in placements:
+                if obj2_key not in placements_norm:
                     print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
                     continue
-
-                obj2 = placements[obj2_name]
+                obj2 = placements_norm[obj2_key]
                 expected = obj1['centerX'] + offset
                 is_rule_passed = math.isclose(obj2['centerX'], expected, abs_tol=0.001)
                 actual_value_str = f"X2={obj2['centerX']:.2f}, ожидалось {expected:.2f}"
                 rule_description += f" и '{obj2_name}'"
+
+            elif rule_type == 'Ориентация':
+                try:
+                    expected_angle = float(value_str)
+                except Exception:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение ориентации в правиле #{index+1}.")
+                    continue
+                actual = obj1.get('rotation_deg', 0.0)
+                diff = abs((actual - expected_angle + 180) % 360 - 180)
+                is_rule_passed = diff <= 0.5
+                actual_value_str = f"угол {actual:.1f}°"
 
             else:
                 print(f"  - [НЕИЗВЕСТНО] Тип правила '{rule_type}' не поддерживается валидатором.")
