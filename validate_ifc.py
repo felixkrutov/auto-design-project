@@ -2,10 +2,21 @@ import ifcopenshell
 import pandas as pd
 import sys
 import math
+import re
+import unicodedata
 
 def normalize_name(name: str) -> str:
-    """Normalize equipment names."""
-    return name.strip().replace(' ', '_').lower()
+    """Усиленная нормализация имен для гарантированного соответствия."""
+    if not name:
+        return ""
+    
+    name = ''.join(c for c in name if unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Co', 'Cn'))
+    name = unicodedata.normalize('NFC', name)
+    name = re.sub(r'\s+', ' ', name.strip())
+    name = name.replace(' ', '_').lower()
+    name = name.encode('ascii', 'ignore').decode('ascii')
+    
+    return name
 
 def get_rules_from_google_sheet(sheet_url):
     """
@@ -53,8 +64,6 @@ def extract_placements_from_ifc(ifc_filename):
     for element in elements:
         name = element.Name
         
-        # --- ИСПРАВЛЕННАЯ И УСИЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ГЕОМЕТРИИ ---
-        
         # 1. Получаем координаты центральной точки вставки
         center_x, center_y, center_z = get_absolute_placement(element.ObjectPlacement)
 
@@ -67,7 +76,6 @@ def extract_placements_from_ifc(ifc_filename):
             continue
 
         for rep in element.Representation.Representations:
-            # Ищем основное тело объекта ('Body') типа 'SweptSolid'
             if rep.RepresentationIdentifier == 'Body' and rep.is_a("IfcShapeRepresentation"):
                 for item in rep.Items:
                     if item.is_a("IfcExtrudedAreaSolid"):
@@ -76,11 +84,11 @@ def extract_placements_from_ifc(ifc_filename):
                         if profile.is_a("IfcRectangleProfileDef"):
                             width = profile.XDim
                             depth = profile.YDim
-                            height = solid.Depth  # Извлекаем высоту
+                            height = solid.Depth
                             found_geometry = True
-                            break # Нашли нужную геометрию, выходим из цикла по Items
+                            break
             if found_geometry:
-                break # Выходим из цикла по Representations
+                break
         
         if not found_geometry:
             print(f"  > ПРЕДУПРЕЖДЕНИЕ: Не удалось извлечь размеры для '{name}'. Пропускаем объект.")
@@ -101,7 +109,6 @@ def extract_placements_from_ifc(ifc_filename):
             'width': width, 'depth': depth, 'height': height,
             'rotation_deg': rotation
         }
-        # --- КОНЕЦ ИСПРАВЛЕННОЙ ЛОГИКИ ---
         
     print(f"  > Найдено и обработано {len(placements)} объектов.")
     return placements
@@ -120,13 +127,15 @@ def validate_layout(rules_df, placements):
     
     for index, rule in rules_df.iterrows():
         rule_type = rule['Тип правила'].strip()
-        obj1_name = rule['Объект1'].strip()
+        obj1_name_orig = rule['Объект1'].strip()
+        obj2_name_orig = rule.get('Объект2', '').strip()
         value_str = str(rule['Значение']).strip()
 
         is_rule_passed = None
         actual_value_str = ""
-        rule_description = f"Правило #{index+1}: '{rule_type}' для '{obj1_name}'"
+        rule_description = f"Правило #{index+1}: '{rule_type}' для '{obj1_name_orig}'"
 
+        # Правила, которые применяются ко всем объектам (зона/коридор)
         if rule_type == 'Запретная зона':
             try:
                 zone_xmin, zone_ymin, zone_xmax, zone_ymax = map(float, value_str.split(','))
@@ -135,7 +144,7 @@ def validate_layout(rules_df, placements):
                 continue
             
             violator = None
-            for obj_name, obj in placements.items():
+            for obj_name, obj in placements.items(): # Итерируем по всем найденным объектам
                 obj_xmin, obj_ymin = obj['minX'], obj['minY']
                 obj_xmax = obj_xmin + obj['width']
                 obj_ymax = obj_ymin + obj['depth']
@@ -161,7 +170,7 @@ def validate_layout(rules_df, placements):
             cy_max = max(y1, y2) + width/2
 
             violator = None
-            for n, obj in placements.items():
+            for n, obj in placements.items(): # Итерируем по всем найденным объектам
                 if (obj['minX'] < cx_max and obj['minX'] + obj['width'] > cx_min and
                     obj['minY'] < cy_max and obj['minY'] + obj['depth'] > cy_min):
                     violator = n
@@ -170,34 +179,33 @@ def validate_layout(rules_df, placements):
             is_rule_passed = violator is None
             actual_value_str = f"пересекает {violator}" if violator else "коридор свободен"
 
+        # Правила, требующие поиска конкретных объектов
         else:
-            obj1_key = normalize_name(obj1_name)
+            obj1_key = normalize_name(obj1_name_orig)
             if obj1_key not in placements_norm:
-                print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj1_name}' из правила #{index+1} не найден в IFC.")
+                print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj1_name_orig}' (нормал. {repr(obj1_key)}) из правила #{index+1} не найден в IFC.")
                 continue
 
             obj1 = placements_norm[obj1_key]
 
             if rule_type == 'Мин. расстояние до':
-                obj2_name = rule['Объект2'].strip()
-                obj2_key = normalize_name(obj2_name)
+                obj2_key = normalize_name(obj2_name_orig)
                 value = float(value_str) if value_str else 0.0
                 if obj2_key not in placements_norm:
-                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила #{index+1} не найден в IFC.")
                     continue
 
                 obj2 = placements_norm[obj2_key]
                 distance = math.sqrt((obj1['centerX'] - obj2['centerX'])**2 + (obj1['centerY'] - obj2['centerY'])**2)
                 
                 is_rule_passed = distance >= value
-                rule_description += f" и '{obj2_name}' (>= {value:.2f}м)"
+                rule_description += f" и '{obj2_name_orig}' (>= {value:.2f}м)"
                 actual_value_str = f"факт: {distance:.2f}м"
 
             elif rule_type in ['Выровнять по оси X', 'Выровнять по оси Y']:
-                obj2_name = rule['Объект2'].strip()
-                obj2_key = normalize_name(obj2_name)
+                obj2_key = normalize_name(obj2_name_orig)
                 if obj2_key not in placements_norm:
-                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила #{index+1} не найден в IFC.")
                     continue
 
                 obj2 = placements_norm[obj2_key]
@@ -208,14 +216,13 @@ def validate_layout(rules_df, placements):
                 else:  # 'Выровнять по оси Y'
                     is_rule_passed = math.isclose(obj1['centerY'], obj2['centerY'], abs_tol=0.001)
                     actual_value_str = f"центры: {obj1['centerY']:.3f}м и {obj2['centerY']:.3f}м"
-                rule_description += f" и '{obj2_name}'"
+                rule_description += f" и '{obj2_name_orig}'"
 
             elif rule_type == 'Технологическая последовательность':
-                obj2_name = rule['Объект2'].strip()
-                obj2_key = normalize_name(obj2_name)
+                obj2_key = normalize_name(obj2_name_orig)
                 direction = rule.get('Направление', 'Y').strip()
                 if obj2_key not in placements_norm:
-                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила #{index+1} не найден в IFC.")
                     continue
                 obj2 = placements_norm[obj2_key]
                 gap = 2.0
@@ -225,13 +232,13 @@ def validate_layout(rules_df, placements):
                 else:
                     is_rule_passed = obj1['minX'] + obj1['width'] <= obj2['minX'] - gap + 0.001
                     actual_value_str = f"X1_end={obj1['minX'] + obj1['width']:.2f}, X2_start={obj2['minX']:.2f}"
-                rule_description += f" -> '{obj2_name}'"
+                rule_description += f" -> '{obj2_name_orig}'"
 
             elif rule_type == 'Производственная зона':
                 try:
                     x_min, y_min, x_max, y_max = map(float, value_str.split(','))
                 except Exception:
-                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение зоны для '{obj1_name}'.")
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение зоны для '{obj1_name_orig}'.")
                     continue
 
                 is_rule_passed = (obj1['minX'] >= x_min - 0.001 and obj1['minY'] >= y_min - 0.001 and
@@ -240,17 +247,17 @@ def validate_layout(rules_df, placements):
                 actual_value_str = f"границы объекта в зоне [{x_min},{y_min},{x_max},{y_max}]"
 
             elif rule_type == 'Параллельная линия':
-                obj2_name = rule['Объект2'].strip()
-                obj2_key = normalize_name(obj2_name)
+                obj2_key = normalize_name(obj2_name_orig)
                 offset = float(value_str) if value_str else 0.0
                 if obj2_key not in placements_norm:
-                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name}' из правила #{index+1} не найден в IFC.")
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Объект '{obj2_name_orig}' (нормал. {repr(obj2_key)}) из правила #{index+1} не найден в IFC.")
                     continue
+
                 obj2 = placements_norm[obj2_key]
                 expected = obj1['centerX'] + offset
                 is_rule_passed = math.isclose(obj2['centerX'], expected, abs_tol=0.001)
                 actual_value_str = f"X2={obj2['centerX']:.2f}, ожидалось {expected:.2f}"
-                rule_description += f" и '{obj2_name}'"
+                rule_description += f" и '{obj2_name_orig}'"
 
             elif rule_type == 'Ориентация':
                 try:
@@ -259,9 +266,65 @@ def validate_layout(rules_df, placements):
                     print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение ориентации в правиле #{index+1}.")
                     continue
                 actual = obj1.get('rotation_deg', 0.0)
-                diff = abs((actual - expected_angle + 180) % 360 - 180)
-                is_rule_passed = diff <= 0.5
+                # Нормализация угла к диапазону -180 до 180, чтобы правильно сравнить
+                diff = abs( (actual - expected_angle + 180) % 360 - 180 )
+                is_rule_passed = diff <= 0.5 # Допуск 0.5 градуса
                 actual_value_str = f"угол {actual:.1f}°"
+
+            elif rule_type == 'Привязка к стене':
+                try:
+                    side, dist_str = value_str.split(',')
+                    dist = float(dist_str)
+                except Exception:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение привязки к стене для '{obj1_name_orig}'.")
+                    continue
+                
+                wall_thickness_val = 0.2 # Жестко заданный, как в layout_solver.py
+                
+                if side == 'Xmin':
+                    expected_x = dist + wall_thickness_val
+                    is_rule_passed = math.isclose(obj1['minX'], expected_x, abs_tol=0.001)
+                    actual_value_str = f"X_min={obj1['minX']:.3f}м, ожидалось {expected_x:.3f}м"
+                elif side == 'Xmax':
+                    expected_x = 120.0 - wall_thickness_val - dist - obj1['width'] # room_width - wall - dist - obj_width
+                    is_rule_passed = math.isclose(obj1['minX'], expected_x, abs_tol=0.001)
+                    actual_value_str = f"X_min={obj1['minX']:.3f}м, ожидалось {expected_x:.3f}м"
+                elif side == 'Ymin':
+                    expected_y = dist + wall_thickness_val
+                    is_rule_passed = math.isclose(obj1['minY'], expected_y, abs_tol=0.001)
+                    actual_value_str = f"Y_min={obj1['minY']:.3f}м, ожидалось {expected_y:.3f}м"
+                elif side == 'Ymax':
+                    expected_y = 80.0 - wall_thickness_val - dist - obj1['depth'] # room_depth - wall - dist - obj_depth
+                    is_rule_passed = math.isclose(obj1['minY'], expected_y, abs_tol=0.001)
+                    actual_value_str = f"Y_min={obj1['minY']:.3f}м, ожидалось {expected_y:.3f}м"
+                else:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Неизвестная сторона привязки к стене '{side}' для '{obj1_name_orig}'.")
+                    continue
+                rule_description += f" к стене {side} отступ {dist}м"
+            
+            elif rule_type == 'Зона обслуживания':
+                try:
+                    margin = float(value_str)
+                except Exception:
+                    print(f"  - [ПРЕДУПРЕЖДЕНИЕ] Некорректное значение зоны обслуживания для '{obj1_name_orig}'.")
+                    continue
+                
+                violator = None
+                for other_name, other_obj in placements.items():
+                    if normalize_name(other_name) == obj1_key:
+                        continue # Пропускаем сам объект
+                    
+                    # Проверяем расстояние от центра obj1 до границ других объектов
+                    # Для упрощения пока проверяем, что центры других объектов вне радиуса margin от центра obj1
+                    distance_centers = math.sqrt((obj1['centerX'] - other_obj['centerX'])**2 + (obj1['centerY'] - other_obj['centerY'])**2)
+                    
+                    if distance_centers < margin - 0.001: # Если расстояние меньше требуемого
+                        violator = other_name
+                        break
+                
+                is_rule_passed = violator is None
+                actual_value_str = f"пересекает {violator}" if violator else "зона обслуживания свободна"
+                rule_description += f" радиус {margin}м"
 
             else:
                 print(f"  - [НЕИЗВЕСТНО] Тип правила '{rule_type}' не поддерживается валидатором.")
@@ -280,8 +343,7 @@ def validate_layout(rules_df, placements):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("\nОшибка: Неверное количество аргументов.")
-        print("Пример запуска: python validate_ifc.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
+        print("\nОшибка: Неверное количество аргументов.\nПример запуска: python validate_ifc.py <URL_Google_Таблицы> <путь_к_prototype.ifc>\n")
     else:
         google_sheet_url = sys.argv[1]
         ifc_file_path = sys.argv[2]
