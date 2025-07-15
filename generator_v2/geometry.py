@@ -58,8 +58,12 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     ifcopenshell.api.run("aggregate.assign_object", f, products=[building], relating_object=site)
     ifcopenshell.api.run("aggregate.assign_object", f, products=[storey], relating_object=building)
     
-    # Получаем owner_history
-    owner_history = f.by_type("IfcOwnerHistory")[0]
+    # Создаем OwnerHistory вручную
+    person = f.createIfcPerson("AutoDesign")
+    organization = f.createIfcOrganization("AutoDesign System")
+    person_organization = f.createIfcPersonAndOrganization(person, organization)
+    application = f.createIfcApplication(organization, "1.0", "AutoDesign Generator", "ADG")
+    owner_history = f.createIfcOwnerHistory(person_organization, application, "ADDED", int(time.time()))
 
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
