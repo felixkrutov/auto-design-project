@@ -55,17 +55,16 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     )
     
     # 4. IfcOwnerHistory (8 атрибутов)
-    # ИСПРАВЛЕНО: Преобразование time.time() в int() для LastModifiedDate и CreationDate
-    current_timestamp = int(time.time()) # Получаем текущую временную метку как целое число
+    current_timestamp = int(time.time()) 
     owner_history = f.createIfcOwnerHistory(
         person,                     
         application,                
         None,                       
         'ADDED',                    
-        current_timestamp,          # ИСПРАВЛЕНО: int(time.time())
+        current_timestamp,          
         None,                       
         None,                       
-        current_timestamp           # ИСПРАВЛЕНО: int(time.time())
+        current_timestamp           
     )
     
     # 5. IfcProject (8 атрибутов)
@@ -82,10 +81,11 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     )
     
     # 6. IfcGeometricRepresentationContext и IfcUnitAssignment
+    # ИСПРАВЛЕНО: Заменен 'name' на 'context_identifier'
     context = ifcopenshell.api.run("context.add_context", f, 
                                    context_type="Model", 
                                    target_view="MODEL_VIEW", 
-                                   name="Body")
+                                   context_identifier="Body") # ИСПРАВЛЕНО ТУТ
 
     ifcopenshell.api.run("unit.assign_unit", f, 
                           length={"unit_type": "LENGTHUNIT", "name": "METRE"})
