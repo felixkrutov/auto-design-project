@@ -35,8 +35,8 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
-    # --- ИСПРАВЛЕНИЕ: Создаем файл и всю базовую структуру одной командой API ---
-    f = ifcopenshell.api.run("project.create_file", schema_identifier="IFC4")
+    # --- ИСПРАВЛЕНИЕ: Используем правильный параметр version вместо schema_identifier ---
+    f = ifcopenshell.api.run("project.create_file", version="IFC4")
     
     # Получаем доступ к автоматически созданным элементам
     owner_history = f.by_type("IfcOwnerHistory")[0]
