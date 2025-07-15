@@ -6,11 +6,35 @@
   "equipment": [
     {
       "id": "mixer_01",
-      "name": "Тестомес М-100"
+      "name": "Тестомес М-100",
+      "footprint": { "width": 2.0, "depth": 3.0 },
+      "height": 2.5
     },
     {
       "id": "extruder_01",
-      "name": "Экструдер П-200"
+      "name": "Экструдер П-200",
+      "footprint": { "width": 1.5, "depth": 5.0 },
+      "height": 3.0
+    }
+  ],
+  "rules": [
+    {
+      "type": "PLACE_AT",
+      "target": "mixer_01",
+      "params": {
+        "position": [1.0, 2.0],
+        "rotation_deg": 0
+      }
+    },
+    {
+      "type": "PLACE_AFTER",
+      "target": "extruder_01",
+      "params": {
+        "anchor": "mixer_01",
+        "direction": "Y",
+        "distance": 2.0,
+        "alignment": "center"
+      }
     }
   ]
 }
