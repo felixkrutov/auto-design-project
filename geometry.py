@@ -38,76 +38,61 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     
     f = ifcopenshell.file(schema="IFC4")
     
-    # --- ИСПРАВЛЕНИЕ: Ручное создание корневых сущностей с правильным количеством атрибутов ---
+    # --- ИСПРАВЛЕНИЕ: Ручное создание корневых сущностей с правильным количеством атрибутов и типами данных ---
 
     # 1. IfcPerson (8 атрибутов)
-    # IfcPerson(ID, FamilyName, GivenName, MiddleNames, PrefixTitles, SuffixTitles, Roles, Addresses)
-    # Убираем один лишний None в конце
     person = f.createIfcPerson(None, "Automation", None, None, None, None, None, None) 
     
     # 2. IfcOrganization (5 атрибутов)
-    # IfcOrganization(Id, Name, Description, Roles, Addresses)
     organization = f.createIfcOrganization(None, "AutoDesign Inc.", None, None, None)
     
     # 3. IfcApplication (4 атрибута)
-    # IfcApplication(ApplicationDeveloper, Version, ApplicationFullName, ApplicationIdentifier)
     application = f.createIfcApplication(
-        organization, # ApplicationDeveloper (тип IfcOrganization)
-        "0.7.0",      # Version (строка)
-        "IfcOpenShell (AutoDesign)", # ApplicationFullName (строка)
-        "IfcOpenShell (AutoDesign)"  # ApplicationIdentifier (строка)
+        organization, 
+        "0.7.0",      
+        "IfcOpenShell (AutoDesign)", 
+        "IfcOpenShell (AutoDesign)"  
     )
     
     # 4. IfcOwnerHistory (8 атрибутов)
-    # IfcOwnerHistory(OwningUser, OwningApplication, State, ChangeAction, LastModifiedDate, LastModifyingApplication, DocumentationControl, CreationDate)
-    # Исправлена передача аргументов:
+    # ИСПРАВЛЕНО: Преобразование time.time() в int() для LastModifiedDate и CreationDate
+    current_timestamp = int(time.time()) # Получаем текущую временную метку как целое число
     owner_history = f.createIfcOwnerHistory(
-        person,                     # 1: OwningUser (IfcPerson)
-        application,                # 2: OwningApplication (IfcApplication)
-        None,                       # 3: State (IfcStateEnum) - например, 'READONLY', или None
-        'ADDED',                    # 4: ChangeAction (IfcChangeActionEnum) - 'ADDED', 'MODIFIED' и т.д.
-        time.time(),                # 5: LastModifiedDate (IfcTimeStamp)
-        None,                       # 6: LastModifyingApplication (IfcApplication)
-        None,                       # 7: DocumentationControl (IfcDocumentSelect)
-        time.time()                 # 8: CreationDate (IfcTimeStamp)
+        person,                     
+        application,                
+        None,                       
+        'ADDED',                    
+        current_timestamp,          # ИСПРАВЛЕНО: int(time.time())
+        None,                       
+        None,                       
+        current_timestamp           # ИСПРАВЛЕНО: int(time.time())
     )
     
     # 5. IfcProject (8 атрибутов)
-    # IfcProject(GlobalId, OwnerHistory, Name, Description, ObjectType, LongName, Phase, RepresentationContexts, UnitsInContext)
-    # Contexts и UnitsInContext будут добавлены позже через API
     project = f.createIfcProject(
-        ifcopenshell.guid.new(),    # GlobalId
-        owner_history,              # OwnerHistory
-        project_data['meta']['project_name'], # Name
-        None,                       # Description
-        None,                       # ObjectType
-        None,                       # LongName
-        None,                       # Phase
-        None,                       # RepresentationContexts (будет добавлено ниже)
-        None                        # UnitsInContext (будет добавлено ниже)
+        ifcopenshell.guid.new(),    
+        owner_history,              
+        project_data['meta']['project_name'], 
+        None,                       
+        None,                       
+        None,                       
+        None,                       
+        None,                       
+        None                        
     )
     
     # 6. IfcGeometricRepresentationContext и IfcUnitAssignment
-    # Используем API для создания контекстов и единиц, так как это сложнее вручную.
-    # Этот API-вызов часто более стабилен для этой цели.
     context = ifcopenshell.api.run("context.add_context", f, 
                                    context_type="Model", 
                                    target_view="MODEL_VIEW", 
                                    name="Body")
 
-    # IfcUnitAssignment создается вместе с контекстом
     ifcopenshell.api.run("unit.assign_unit", f, 
                           length={"unit_type": "LENGTHUNIT", "name": "METRE"})
 
-    # Привязываем контекст и единицы к проекту
     ifcopenshell.api.run("context.assign_context", f, 
                           product_representation=context, 
                           relating_context=project)
-    # ifcopenshell.api.run("unit.assign_project_units", f, units=...) # Может потребоваться, если assign_unit не делает этого автоматически
-
-    # Теперь все базовые сущности созданы и доступны
-    # project = f.by_type("IfcProject")[0] # Не нужно, project уже есть
-    # context = f.by_type("IfcGeometricRepresentationContext")[0] # Не нужно, context уже есть
     
     # Создаем и привязываем нашу собственную структуру здания
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
