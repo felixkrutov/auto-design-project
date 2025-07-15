@@ -1,21 +1,16 @@
-# --- ПОЛНЫЙ И ОКОНЧАТЕЛЬНО ИСПРАВЛЕННЫЙ КОД ДЛЯ geometry.py ---
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
 import time
 
 def create_element(f, context, name, placement, w, d, h, style=None):
-    """Вспомогательная функция для создания одного элемента с применением стиля через API."""
-    # Получаем IfcOwnerHistory из файла. Предполагается, что он уже создан.
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
-    # Создаем геометрию
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
-    # Создаем представление и продукт
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
 
@@ -27,7 +22,6 @@ def create_element(f, context, name, placement, w, d, h, style=None):
     else:
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
 
-    # Применяем стиль к готовому элементу
     if style:
         ifcopenshell.api.run("style.assign_style", f, product=element, style=style)
     
@@ -38,15 +32,10 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     
     f = ifcopenshell.file(schema="IFC4")
     
-    # --- ИСПРАВЛЕНИЕ: Ручное создание корневых сущностей с правильным количеством атрибутов и типами данных ---
-
-    # 1. IfcPerson (8 атрибутов)
     person = f.createIfcPerson(None, "Automation", None, None, None, None, None, None) 
     
-    # 2. IfcOrganization (5 атрибутов)
     organization = f.createIfcOrganization(None, "AutoDesign Inc.", None, None, None)
     
-    # 3. IfcApplication (4 атрибута)
     application = f.createIfcApplication(
         organization, 
         "0.7.0",      
@@ -54,7 +43,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         "IfcOpenShell (AutoDesign)"  
     )
     
-    # 4. IfcOwnerHistory (8 атрибутов)
     current_timestamp = int(time.time()) 
     owner_history = f.createIfcOwnerHistory(
         person,                     
@@ -67,7 +55,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         current_timestamp           
     )
     
-    # 5. IfcProject (8 атрибутов)
     project = f.createIfcProject(
         ifcopenshell.guid.new(),    
         owner_history,              
@@ -80,21 +67,19 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         None                        
     )
     
-    # 6. IfcGeometricRepresentationContext и IfcUnitAssignment
-    # ИСПРАВЛЕНО: Заменен 'name' на 'context_identifier'
     context = ifcopenshell.api.run("context.add_context", f, 
                                    context_type="Model", 
                                    target_view="MODEL_VIEW", 
-                                   context_identifier="Body") # ИСПРАВЛЕНО ТУТ
+                                   context_identifier="Body")
 
-    ifcopenshell.api.run("unit.assign_unit", f, 
-                          length={"unit_type": "LENGTHUNIT", "name": "METRE"})
+    length_unit = f.createIfcSIUnit("LENGTHUNIT", None, "METRE")
+    unit_assignment = f.createIfcUnitAssignment([length_unit])
+    project.UnitsInContext = unit_assignment
 
     ifcopenshell.api.run("context.assign_context", f, 
                           product_representation=context, 
                           relating_context=project)
     
-    # Создаем и привязываем нашу собственную структуру здания
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
@@ -118,12 +103,12 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         return style
 
     styles_map = {
-        "floor_style": create_style("FloorStyle", 0.4, 0.4, 0.8), # Синий
-        "wall_style": create_style("WallStyle", 0.7, 0.7, 0.7),   # Серый
-        "silos_style": create_style("SilosStyle", 0.8, 0.8, 0.8), # Светло-серый
-        "mixer_style": create_style("MixerStyle", 0.9, 0.9, 0.6), # Бежевый
-        "press_style": create_style("PressStyle", 0.6, 0.9, 0.6), # Светло-зеленый
-        "default_style": create_style("DefaultStyle", 0.9, 0.5, 0.5) # Красноватый
+        "floor_style": create_style("FloorStyle", 0.4, 0.4, 0.8),
+        "wall_style": create_style("WallStyle", 0.7, 0.7, 0.7),
+        "silos_style": create_style("SilosStyle", 0.8, 0.8, 0.8),
+        "mixer_style": create_style("MixerStyle", 0.9, 0.9, 0.6),
+        "press_style": create_style("PressStyle", 0.6, 0.9, 0.6),
+        "default_style": create_style("DefaultStyle", 0.9, 0.5, 0.5)
     }
     
     all_elements = []
