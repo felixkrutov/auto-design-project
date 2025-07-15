@@ -1,4 +1,3 @@
-# --- ПОЛНЫЙ КОД ДЛЯ main.py ---
 import json
 import os
 from placement import calculate_placements
@@ -17,6 +16,7 @@ def run_generation_pipeline(project_file: str, output_file: str):
 
     print(f"2. Начинаем обработку проекта: '{project_data['meta']['project_name']}'")
     
+    # ИЗМЕНЕНИЕ ЗДЕСЬ: передаем все данные, а не по частям
     final_placements = calculate_placements(project_data)
     
     if not final_placements:
