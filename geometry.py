@@ -72,7 +72,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
                                    target_view="MODEL_VIEW", 
                                    context_identifier="Body")
 
-    length_unit = f.createIfcSIUnit("METRE", None, "LENGTHUNIT")
+    length_unit = f.createIfcSIUnit(None, "LENGTHUNIT", None, "METRE")
     unit_assignment = f.createIfcUnitAssignment([length_unit])
     project.UnitsInContext = unit_assignment
 
@@ -103,12 +103,12 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         return style
 
     styles_map = {
-        "floor_style": create_style("FloorStyle", 0.4, 0.4, 0.8), # Синий
-        "wall_style": create_style("WallStyle", 0.7, 0.7, 0.7),   # Серый
-        "silos_style": create_style("SilosStyle", 0.8, 0.8, 0.8), # Светло-серый
-        "mixer_style": create_style("MixerStyle", 0.9, 0.9, 0.6), # Бежевый
-        "press_style": create_style("PressStyle", 0.6, 0.9, 0.6), # Светло-зеленый
-        "default_style": create_style("DefaultStyle", 0.9, 0.5, 0.5) # Красноватый
+        "floor_style": create_style("FloorStyle", 0.4, 0.4, 0.8),
+        "wall_style": create_style("WallStyle", 0.7, 0.7, 0.7),
+        "silos_style": create_style("SilosStyle", 0.8, 0.8, 0.8),
+        "mixer_style": create_style("MixerStyle", 0.9, 0.9, 0.6),
+        "press_style": create_style("PressStyle", 0.6, 0.9, 0.6),
+        "default_style": create_style("DefaultStyle", 0.9, 0.5, 0.5)
     }
     
     all_elements = []
