@@ -21,31 +21,22 @@ def calculate_placements(project_data: dict) -> dict:
     positions = {}
     equipment_map = {item['id']: item for item in equipment_list}
 
-    # Создаем виртуальные "коконы" для зон обслуживания
     virtual_boxes = []
     for item in equipment_list:
         m_zone = item.get('maintenance_zone', {})
         w = int((m_zone.get('left', 0) + item['footprint']['width'] + m_zone.get('right', 0)) * SCALE)
         d = int((m_zone.get('back', 0) + item['footprint']['depth'] + m_zone.get('front', 0)) * SCALE)
-        
-        # Смещение реального объекта внутри "кокона"
         x_offset = int(m_zone.get('left', 0) * SCALE)
         y_offset = int(m_zone.get('back', 0) * SCALE)
-
-        # Переменные для "кокона"
         vx = model.NewIntVar(min_x_room, max_x_room - w, f"vx_{item['id']}")
         vy = model.NewIntVar(min_y_room, max_y_room - d, f"vy_{item['id']}")
-        
-        # Переменные для реального объекта (вычисляются через кокон)
         px = model.NewIntVar(min_x_room, max_x_room, f"x_{item['id']}")
         py = model.NewIntVar(min_y_room, max_y_room, f"y_{item['id']}")
         model.Add(px == vx + x_offset)
         model.Add(py == vy + y_offset)
-
         positions[item['id']] = {'x': px, 'y': py}
         virtual_boxes.append({'id': item['id'], 'vx': vx, 'vy': vy, 'vw': w, 'vd': d})
 
-    # Правило "Не пересекаться" для ВНЕШНИХ "коконов"
     intervals_x = [model.NewIntervalVar(box['vx'], box['vw'], box['vx'] + box['vw'], f"ivx_{box['id']}") for box in virtual_boxes]
     intervals_y = [model.NewIntervalVar(box['vy'], box['vd'], box['vy'] + box['vd'], f"ivy_{box['id']}") for box in virtual_boxes]
     model.AddNoOverlap2D(intervals_x, intervals_y)
@@ -62,6 +53,7 @@ def calculate_placements(project_data: dict) -> dict:
             x1, y1, x2, y2 = params['area']
             print(f"    - Правило AVOID_ZONE для зоны [{x1},{y1},{x2},{y2}]")
             for box in virtual_boxes:
+                # Этот код остается без изменений...
                 is_left = model.NewBoolVar(f"az_left_{i}_{box['id']}")
                 is_right = model.NewBoolVar(f"az_right_{i}_{box['id']}")
                 is_below = model.NewBoolVar(f"az_below_{i}_{box['id']}")
@@ -83,6 +75,7 @@ def calculate_placements(project_data: dict) -> dict:
             model.Add(box['vy'] + box['vd'] <= int(y2 * SCALE))
 
         elif rtype == 'ATTACH_TO_WALL':
+            # Этот код остается без изменений...
             target_id = rule.get('target')
             side = params.get('side')
             dist = int(params.get('distance', 0) * SCALE)
@@ -92,8 +85,9 @@ def calculate_placements(project_data: dict) -> dict:
             elif side == 'Xmax': model.Add(box['vx'] + box['vw'] == max_x_room - dist)
             elif side == 'Ymin': model.Add(box['vy'] == min_y_room + dist)
             elif side == 'Ymax': model.Add(box['vy'] + box['vd'] == max_y_room - dist)
-            
+
         elif rtype == 'ALIGN':
+            # Этот код остается без изменений...
             t1, t2 = rule.get('target1'), rule.get('target2')
             axis = params.get('axis')
             print(f"    - Правило ALIGN для '{t1}' и '{t2}' по оси {axis}")
@@ -106,30 +100,30 @@ def calculate_placements(project_data: dict) -> dict:
 
         elif rtype == 'PLACE_AFTER':
             target_id, anchor_id = rule.get('target'), params.get('anchor')
-            direction = params.get('direction', 'Y')
-            print(f"    - Правило PLACE_AFTER: '{target_id}' после '{anchor_id}'")
-            w_anchor = int(equipment_map[anchor_id]['footprint']['width'] * SCALE)
+            print(f"    - МЯГКОЕ Правило PLACE_AFTER: '{target_id}' после '{anchor_id}'")
+            
+            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: МЫ БОЛЬШЕ НЕ ДОБАВЛЯЕМ ЖЕСТКОЕ ПРАВИЛО ---
+            # model.Add(positions[target_id]['y'] >= positions[anchor_id]['y'] + d_anchor)
+            
+            # Вместо этого мы добавляем "штраф" за нарушение этого правила
+            # Штраф будет равен 0, если правило выполняется, и > 0, если нет.
             d_anchor = int(equipment_map[anchor_id]['footprint']['depth'] * SCALE)
+            penalty_var = model.NewIntVar(0, max_y_room, f"penalty_{target_id}")
+            # penalty = max(0, (y_anchor + d_anchor) - y_target)
+            model.Add(penalty_var >= (positions[anchor_id]['y'] + d_anchor) - positions[target_id]['y'])
             
-            # Связываем реальные объекты, а не коконы
-            if direction == 'Y':
-                model.Add(positions[target_id]['y'] >= positions[anchor_id]['y'] + d_anchor)
-            else: # 'X'
-                model.Add(positions[target_id]['x'] >= positions[anchor_id]['x'] + w_anchor)
-            
-            # Добавляем стоимость для минимизации расстояния
-            dx = model.NewIntVar(-max_x_room, max_x_room, f"dx_{target_id}"); model.Add(dx == positions[target_id]['x'] - positions[anchor_id]['x'])
-            dy = model.NewIntVar(-max_y_room, max_y_room, f"dy_{target_id}"); model.Add(dy == positions[target_id]['y'] - positions[anchor_id]['y'])
-            dist = model.NewIntVar(0, max_x_room + max_y_room, f"dist_{target_id}"); model.AddAbsEquality(dist, dx + dy)
-            flow_costs.append(dist)
+            # Добавляем этот штраф в общую стоимость, которую нужно минимизировать
+            # Умножаем на большой коэффициент, чтобы это было очень важное правило
+            flow_costs.append(penalty_var * 10) 
 
     # Целевая функция
-    total_cost = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_cost')
+    total_cost = model.NewIntVar(0, 1000 * max_y_room * 10, 'total_cost')
     model.Add(total_cost == sum(flow_costs))
     model.Minimize(total_cost)
-    print("  - Добавлена целевая функция: Минимизация длины технологических потоков.")
+    print("  - Добавлена целевая функция: Минимизация нарушений тех. потока.")
 
     # Запуск решателя
+    # ... (код остается без изменений) ...
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = float(solver_options.get('time_limit_sec', 30.0))
     status = solver.Solve(model)
