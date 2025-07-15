@@ -1,4 +1,4 @@
-## ПОЛНЫЙ КОД ДЛЯ geometry.py
+# --- ПОЛНЫЙ КОД ДЛЯ geometry.py ---
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
@@ -10,11 +10,8 @@ def create_element(f, context, name, placement, w, d, h):
     profile_placement = f.createIfcAxis2Placement2D(f.createIfcCartesianPoint((-w / 2, -d / 2)))
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", profile_placement, w, d)
     
-    # Положение и направление вытягивания
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
-    
-    # Создаем тело
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
@@ -22,7 +19,6 @@ def create_element(f, context, name, placement, w, d, h):
     
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
-    # Определяем тип элемента для IFC
     if "Стена" in name:
         element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
     elif "Пол" in name:
@@ -38,7 +34,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     f = ifcopenshell.file(schema="IFC4")
     owner_history = f.createIfcOwnerHistory(f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization(Name="AutoDesign")), f.createIfcApplication(f.createIfcOrganization(Name="GeneratorV2"), "2.0", "GeneratorV2", "G2"), CreationDate=int(time.time()))
     
-    # Обертка для создания точек, которая нравится ifcopenshell
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
             
@@ -61,13 +56,11 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
-        # Пол: центр в центре комнаты, на нулевой отметке
         floor_pos = P(w / 2, d / 2, 0.0)
         floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(floor_pos))
-        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t) # Пол идет вниз
+        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t) 
         all_elements.append(floor)
         
-        # Стены: вычисляем центральные точки для каждой
         walls_def = [
             {'name': 'Стена_Юг',    'pos': P(w / 2, 0,       h / 2), 'dims': (w, wall_t, h)},
             {'name': 'Стена_Север',  'pos': P(w / 2, d,       h / 2), 'dims': (w, wall_t, h)},
@@ -87,7 +80,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         eq_d = eq_data['footprint']['depth']
         eq_h = eq_data['height']
         
-        # Вычисляем ЦЕНТР оборудования. Координаты от решателя - это левый нижний угол.
         pos = P(float(placement['x']) + eq_w / 2, float(placement['y']) + eq_d / 2, eq_h / 2)
         
         eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(pos))
