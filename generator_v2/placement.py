@@ -1,5 +1,5 @@
+# --- ПОЛНЫЙ КОД ДЛЯ placement.py ---
 from ortools.sat.python import cp_model
-import time
 
 def calculate_placements(project_data: dict) -> dict:
     print("3. Расчет положений оборудования с помощью OR-Tools...")
@@ -100,9 +100,9 @@ def calculate_placements(project_data: dict) -> dict:
             print(f"    - МЯГКОЕ Правило PLACE_AFTER: '{target_id}' после '{anchor_id}'")
             
             d_anchor = int(equipment_map[anchor_id]['footprint']['depth'] * SCALE)
-            penalty_var = model.NewIntVar(0, max_y_room, f"penalty_{target_id}")
+            penalty_var = model.NewIntVar(0, max_y_room * 2, f"penalty_{target_id}")
             model.Add(penalty_var >= (positions[anchor_id]['y'] + d_anchor) - positions[target_id]['y'])
-            flow_costs.append(penalty_var * 10) 
+            flow_costs.append(penalty_var)
 
     # --- Целевая функция ---
     flow_penalty = model.NewIntVar(0, 1000 * max_y_room * 10, 'flow_penalty')
@@ -113,7 +113,6 @@ def calculate_placements(project_data: dict) -> dict:
         for j in range(i + 1, len(virtual_boxes)):
             box1 = virtual_boxes[i]
             box2 = virtual_boxes[j]
-            
             dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{i}_{j}")
             dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{i}_{j}")
             model.AddAbsEquality(dist_x, box1['vx'] - box2['vx'])
@@ -124,9 +123,8 @@ def calculate_placements(project_data: dict) -> dict:
     total_spread = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_spread')
     model.Add(total_spread == sum(distances))
 
-    FLOW_WEIGHT = 1000 
+    FLOW_WEIGHT = 10000 
     model.Minimize(flow_penalty * FLOW_WEIGHT - total_spread)
-
     print("  - Добавлена сложная целевая функция: (Штраф за поток * ВЕС) - (Общий разброс).")
 
     # --- Запуск решателя ---
