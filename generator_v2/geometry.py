@@ -1,4 +1,4 @@
-# --- ПОЛНЫЙ И ИСПРАВЛЕННЫЙ КОД ДЛЯ geometry.py ---
+# --- ПОЛНЫЙ И ОКОНЧАТЕЛЬНО ИСПРАВЛЕННЫЙ КОД ДЛЯ geometry.py ---
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
@@ -6,19 +6,12 @@ import time
 
 def create_element(f, context, name, placement, w, d, h):
     """Вспомогательная функция для создания одного элемента (ящика)."""
-    # Профиль создается от своего нижнего левого угла (0,0)
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
-    
-    # Положение и направление вытягивания (вверх по Z)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
-    
-    # Создаем тело
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
-    
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
-    
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
     if "Стена" in name:
@@ -58,13 +51,14 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
-        # Пол - его нижний левый угол в (0,0,0)
+        # Пол
         floor_pos = P(0.0, 0.0, 0.0)
-        floor_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(floor_pos))
-        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t) # Пол идет вниз
+        # ИСПРАВЛЕНИЕ: привязка к этажу
+        floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(floor_pos))
+        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t)
         all_elements.append(floor)
         
-        # Стены - вычисляем нижние левые углы для каждой
+        # Стены
         walls_def = [
             {'name': 'Стена_Юг',    'pos': P(0.0, 0.0, 0.0), 'dims': (w, wall_t, h)},
             {'name': 'Стена_Север',  'pos': P(0.0, d - wall_t, 0.0), 'dims': (w, wall_t, h)},
@@ -72,7 +66,8 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
             {'name': 'Стена_Восток', 'pos': P(w - wall_t, 0.0, 0.0), 'dims': (wall_t, d, h)}
         ]
         for w_def in walls_def:
-            wall_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(w_def['pos']))
+            # ИСПРАВЛЕНИЕ: привязка к этажу
+            wall_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(w_def['pos']))
             wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'])
             all_elements.append(wall)
 
@@ -81,11 +76,10 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     for eq_id, placement in placements.items():
         eq_data = equipment_map.get(eq_id)
         eq_w, eq_d, eq_h = eq_data['footprint']['width'], eq_data['footprint']['depth'], eq_data['height']
-        
-        # Координаты от решателя - это и есть нижний левый угол
         pos = P(float(placement['x']), float(placement['y']), 0.0)
         
-        eq_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(pos))
+        # ИСПРАВЛЕНИЕ: привязка к этажу
+        eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(pos))
         element = create_element(f, context, eq_data['name'], eq_placement, eq_w, eq_d, eq_h)
         all_elements.append(element)
         print(f"     - Создан объект: '{eq_data['name']}'")
