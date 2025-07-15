@@ -1,5 +1,12 @@
-# --- ПОЛНЫЙ КОД ДЛЯ placement.py ---
+# --- ПОЛНЫЙ И ОКОНЧАТЕЛЬНО ИСПРАВЛЕННЫЙ КОД ДЛЯ placement.py ---
 from ortools.sat.python import cp_model
+
+def get_box_by_id(boxes, target_id):
+    """Вспомогательная функция для поиска 'виртуального ящика' по ID."""
+    try:
+        return next(b for b in boxes if b['id'] == target_id)
+    except StopIteration:
+        raise ValueError(f"Ошибка в правилах: не найден объект с ID '{target_id}'")
 
 def calculate_placements(project_data: dict) -> dict:
     print("3. Расчет положений оборудования с помощью OR-Tools...")
@@ -20,29 +27,35 @@ def calculate_placements(project_data: dict) -> dict:
 
     positions = {}
     equipment_map = {item['id']: item for item in equipment_list}
-
     virtual_boxes = []
+
     for item in equipment_list:
         m_zone = item.get('maintenance_zone', {})
         w = int((m_zone.get('left', 0) + item['footprint']['width'] + m_zone.get('right', 0)) * SCALE)
         d = int((m_zone.get('back', 0) + item['footprint']['depth'] + m_zone.get('front', 0)) * SCALE)
+        
+        # Смещение реального объекта внутри виртуального ящика
         x_offset = int(m_zone.get('left', 0) * SCALE)
         y_offset = int(m_zone.get('back', 0) * SCALE)
+
+        # Координаты виртуального ящика (с зоной обслуживания)
         vx = model.NewIntVar(min_x_room, max_x_room - w, f"vx_{item['id']}")
         vy = model.NewIntVar(min_y_room, max_y_room - d, f"vy_{item['id']}")
+        
+        # Координаты реального объекта (левый-нижний угол)
         px = model.NewIntVar(min_x_room, max_x_room, f"x_{item['id']}")
         py = model.NewIntVar(min_y_room, max_y_room, f"y_{item['id']}")
+        
         model.Add(px == vx + x_offset)
         model.Add(py == vy + y_offset)
-        positions[item['id']] = {'x': px, 'y': py}
-        virtual_boxes.append({'id': item['id'], 'vx': vx, 'vy': vy, 'vw': w, 'vd': d})
+        
+        positions[item['id']] = {'x': px, 'y': py, 'w': w, 'd': d}
+        virtual_boxes.append({'id': item['id'], 'vx': vx, 'vy': vy, 'vw': w, 'vd': d, 'px': px, 'py': py})
 
     intervals_x = [model.NewIntervalVar(box['vx'], box['vw'], box['vx'] + box['vw'], f"ivx_{box['id']}") for box in virtual_boxes]
     intervals_y = [model.NewIntervalVar(box['vy'], box['vd'], box['vy'] + box['vd'], f"ivy_{box['id']}") for box in virtual_boxes]
     model.AddNoOverlap2D(intervals_x, intervals_y)
     print("  - Добавлено глобальное правило: NoOverlap2D (с учетом зон обслуживания).")
-
-    flow_costs = []
     
     print("  - Применение правил из project.json...")
     for i, rule in enumerate(rules):
@@ -64,50 +77,82 @@ def calculate_placements(project_data: dict) -> dict:
                 model.AddBoolOr([is_left, is_right, is_below, is_above])
 
         elif rtype == 'PLACE_IN_ZONE':
-            target_id = rule.get('target')
+            box = get_box_by_id(virtual_boxes, rule.get('target'))
             x1, y1, x2, y2 = params['area']
-            print(f"    - Правило PLACE_IN_ZONE для '{target_id}'")
-            box = next(b for b in virtual_boxes if b['id'] == target_id)
+            print(f"    - Правило PLACE_IN_ZONE для '{box['id']}'")
             model.Add(box['vx'] >= int(x1 * SCALE))
             model.Add(box['vy'] >= int(y1 * SCALE))
             model.Add(box['vx'] + box['vw'] <= int(x2 * SCALE))
             model.Add(box['vy'] + box['vd'] <= int(y2 * SCALE))
 
         elif rtype == 'ATTACH_TO_WALL':
-            target_id = rule.get('target')
+            box = get_box_by_id(virtual_boxes, rule.get('target'))
             side = params.get('side')
             dist = int(params.get('distance', 0) * SCALE)
-            print(f"    - Правило ATTACH_TO_WALL для '{target_id}' к стене {side}")
-            box = next(b for b in virtual_boxes if b['id'] == target_id)
+            print(f"    - Правило ATTACH_TO_WALL для '{box['id']}' к стене {side}")
             if side == 'Xmin': model.Add(box['vx'] == min_x_room + dist)
             elif side == 'Xmax': model.Add(box['vx'] + box['vw'] == max_x_room - dist)
             elif side == 'Ymin': model.Add(box['vy'] == min_y_room + dist)
             elif side == 'Ymax': model.Add(box['vy'] + box['vd'] == max_y_room - dist)
             
         elif rtype == 'ALIGN':
-            t1, t2 = rule.get('target1'), rule.get('target2')
+            t1_id, t2_id = rule.get('target1'), rule.get('target2')
+            box1 = get_box_by_id(virtual_boxes, t1_id)
+            box2 = get_box_by_id(virtual_boxes, t2_id)
             axis = params.get('axis')
-            print(f"    - Правило ALIGN для '{t1}' и '{t2}' по оси {axis}")
-            w1 = int(equipment_map[t1]['footprint']['width'] * SCALE); d1 = int(equipment_map[t1]['footprint']['depth'] * SCALE)
-            w2 = int(equipment_map[t2]['footprint']['width'] * SCALE); d2 = int(equipment_map[t2]['footprint']['depth'] * SCALE)
-            center1_x = positions[t1]['x'] + w1 // 2; center1_y = positions[t1]['y'] + d1 // 2
-            center2_x = positions[t2]['x'] + w2 // 2; center2_y = positions[t2]['y'] + d2 // 2
+            print(f"    - Правило ALIGN для '{t1_id}' и '{t2_id}' по оси {axis}")
+            
+            w1 = int(equipment_map[t1_id]['footprint']['width'] * SCALE)
+            d1 = int(equipment_map[t1_id]['footprint']['depth'] * SCALE)
+            w2 = int(equipment_map[t2_id]['footprint']['width'] * SCALE)
+            d2 = int(equipment_map[t2_id]['footprint']['depth'] * SCALE)
+            
+            center1_x = box1['px'] + w1 // 2
+            center1_y = box1['py'] + d1 // 2
+            center2_x = box2['px'] + w2 // 2
+            center2_y = box2['py'] + d2 // 2
+            
             if axis == 'X': model.Add(center1_x == center2_x)
             else: model.Add(center1_y == center2_y)
 
+        # --- ИСПРАВЛЕННАЯ ЛОГИКА ---
         elif rtype == 'PLACE_AFTER':
-            target_id, anchor_id = rule.get('target'), params.get('anchor')
-            print(f"    - МЯГКОЕ Правило PLACE_AFTER: '{target_id}' после '{anchor_id}'")
+            target_box = get_box_by_id(virtual_boxes, rule.get('target'))
+            anchor_box = get_box_by_id(virtual_boxes, params.get('anchor'))
+            direction = params.get('direction', 'Y')
+            distance = int(params.get('distance', 0) * SCALE)
+            alignment = params.get('alignment', 'none')
+
+            print(f"    - Жесткое правило PLACE_AFTER: '{target_box['id']}' после '{anchor_box['id']}'")
+
+            # Размеры реальных объектов (footprint)
+            anchor_w = int(equipment_map[anchor_box['id']]['footprint']['width'] * SCALE)
+            anchor_d = int(equipment_map[anchor_box['id']]['footprint']['depth'] * SCALE)
+            target_w = int(equipment_map[target_box['id']]['footprint']['width'] * SCALE)
+            target_d = int(equipment_map[target_box['id']]['footprint']['depth'] * SCALE)
+
+            # Размещение по направлению
+            if direction == 'Y':
+                # Нижняя грань target_box == Верхняя грань anchor_box + distance
+                model.Add(target_box['py'] == anchor_box['py'] + anchor_d + distance)
+            elif direction == 'X':
+                 # Левая грань target_box == Правая грань anchor_box + distance
+                model.Add(target_box['px'] == anchor_box['px'] + anchor_w + distance)
             
-            d_anchor = int(equipment_map[anchor_id]['footprint']['depth'] * SCALE)
-            penalty_var = model.NewIntVar(0, max_y_room * 2, f"penalty_{target_id}")
-            model.Add(penalty_var >= (positions[anchor_id]['y'] + d_anchor) - positions[target_id]['y'])
-            flow_costs.append(penalty_var)
+            # Выравнивание
+            if alignment == 'center':
+                if direction == 'Y': # Выравниваем по оси X
+                    center_anchor = anchor_box['px'] + anchor_w // 2
+                    center_target = target_box['px'] + target_w // 2
+                    model.Add(center_target == center_anchor)
+                elif direction == 'X': # Выравниваем по оси Y
+                    center_anchor = anchor_box['py'] + anchor_d // 2
+                    center_target = target_box['py'] + target_d // 2
+                    model.Add(center_target == center_anchor)
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-    # --- Целевая функция ---
-    flow_penalty = model.NewIntVar(0, 1000 * max_y_room * 10, 'flow_penalty')
-    model.Add(flow_penalty == sum(flow_costs))
 
+    # --- Целевая функция (упрощенная, т.к. основные правила стали жесткими) ---
     distances = []
     for i in range(len(virtual_boxes)):
         for j in range(i + 1, len(virtual_boxes)):
@@ -115,17 +160,18 @@ def calculate_placements(project_data: dict) -> dict:
             box2 = virtual_boxes[j]
             dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{i}_{j}")
             dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{i}_{j}")
-            model.AddAbsEquality(dist_x, box1['vx'] - box2['vx'])
-            model.AddAbsEquality(dist_y, box1['vy'] - box2['vy'])
+            # Мы минимизируем сумму расстояний между центрами виртуальных боксов
+            model.AddAbsEquality(dist_x, (box1['vx'] + box1['vw']//2) - (box2['vx'] + box2['vw']//2))
+            model.AddAbsEquality(dist_y, (box1['vy'] + box1['vd']//2) - (box2['vy'] + box2['vd']//2))
             distances.append(dist_x)
             distances.append(dist_y)
     
-    total_spread = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_spread')
-    model.Add(total_spread == sum(distances))
+    total_distance = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_distance')
+    model.Add(total_distance == sum(distances))
 
-    FLOW_WEIGHT = 10000 
-    model.Minimize(flow_penalty * FLOW_WEIGHT - total_spread)
-    print("  - Добавлена сложная целевая функция: (Штраф за поток * ВЕС) - (Общий разброс).")
+    # Цель: максимально разнести объекты друг от друга (максимизировать сумму расстояний)
+    model.Maximize(total_distance)
+    print("  - Добавлена целевая функция: Максимизация общего расстояния между объектами.")
 
     # --- Запуск решателя ---
     solver = cp_model.CpSolver()
