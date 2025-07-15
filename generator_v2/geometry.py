@@ -18,11 +18,11 @@ def create_element(f, context, name, placement, w, d, h, style=None):
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
-    # Применение стиля, если он предоставлен
     if style:
         style_assignment = f.createIfcPresentationStyleAssignment([style])
         styled_item = f.createIfcStyledItem(extrusion, [style_assignment], None)
-        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'StyledByItem', [styled_item])
+        # ИСПРАВЛЕНИЕ: Тип представления должен оставаться 'SweptSolid', даже если используется стиль.
+        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [styled_item])
     else:
         shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
         
@@ -59,7 +59,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
     
-    # --- Создание стилей (цветов) ---
     print("   - Создание стилей материалов...")
     styles_map = {
         "floor_style": create_style(f, "FloorStyle", 0.4, 0.4, 0.8), # Синий
@@ -103,7 +102,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         
         eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(pos))
         
-        # Выбор стиля на основе имени
         eq_name_lower = eq_data['name'].lower()
         if "силос" in eq_name_lower: eq_style = styles_map["silos_style"]
         elif "смеситель" in eq_name_lower: eq_style = styles_map["mixer_style"]
