@@ -35,14 +35,22 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
-    # --- ИСПРАВЛЕНИЕ: Создаем файл и всю базовую структуру одной командой API ---
-    f = ifcopenshell.api.run("project.create_file", version="IFC4")
+    # --- ИСПРАВЛЕНИЕ: Создаем пустой файл, а затем инициализируем его с помощью API ---
+    f = ifcopenshell.file(schema="IFC4")
+    ifcopenshell.api.run("project.initialise", f)
     
-    # Получаем доступ к автоматически созданным элементам
+    # Теперь безопасно получаем доступ к автоматически созданным элементам
     project = f.by_type("IfcProject")[0]
     project.Name = project_data['meta']['project_name']
     context = f.by_type("IfcGeometricRepresentationContext")[0]
-    storey = f.by_type("IfcBuildingStorey")[0]
+    
+    # Создаем и привязываем нашу собственную структуру здания
+    site = f.createIfcSite(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Участок")
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Производственный корпус")
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Первый этаж")
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
 
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
