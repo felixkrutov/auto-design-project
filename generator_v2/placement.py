@@ -1,65 +1,106 @@
-def calculate_placements(equipment_list: list, rules: list) -> dict:
+from ortools.sat.python import cp_model
+import time
+
+def calculate_placements(project_data: dict) -> dict:
     """
-    Вычисляет финальное положение (координаты, поворот) для каждого объекта.
-    Возвращает словарь, где ключ - id объекта, а значение - его положение.
+    Вычисляет положения оборудования с помощью решателя CP-SAT.
     """
-    print("3. Расчет положений оборудования...")
+    print("3. Расчет положений оборудования с помощью OR-Tools...")
     
-    placements = {} # Здесь будем хранить результат: { "id": {"x":, "y":, "rot":} }
-    equipment_map = {eq['id']: eq for eq in equipment_list}
+    equipment_list = project_data.get('equipment', [])
+    rules = project_data.get('rules', [])
+    room_dims = project_data.get('architecture', {}).get('room_dimensions', {})
+    wall_thickness = project_data.get('architecture', {}).get('wall_thickness', 0.2)
+    solver_options = project_data.get('solver_options', {})
 
-    # Сначала обрабатываем простые правила, чтобы знать положение "якорей"
-    rules.sort(key=lambda r: 0 if r['type'] == 'PLACE_AT' else 1)
+    if not all([equipment_list, room_dims]):
+        print("  > ОШИБКА: Отсутствуют данные об оборудовании или размерах помещения.")
+        return None
 
+    model = cp_model.CpModel()
+    SCALE = 100 # Увеличим масштаб для большей точности
+
+    # Внутренние границы помещения
+    min_x = int(wall_thickness * SCALE)
+    max_x = int((room_dims['width'] - wall_thickness) * SCALE)
+    min_y = int(wall_thickness * SCALE)
+    max_y = int((room_dims['depth'] - wall_thickness) * SCALE)
+
+    positions = {}
+    equipment_map = {item['id']: item for item in equipment_list}
+
+    # Создаем переменные для каждого объекта
+    for item in equipment_list:
+        w = int(item['footprint']['width'] * SCALE)
+        d = int(item['footprint']['depth'] * SCALE)
+        positions[item['id']] = {
+            'x': model.NewIntVar(min_x, max_x - w, f"x_{item['id']}"),
+            'y': model.NewIntVar(min_y, max_y - d, f"y_{item['id']}")
+        }
+
+    # Правило "Не пересекаться"
+    if solver_options.get('no_overlap', True):
+        intervals_x = []
+        intervals_y = []
+        for item in equipment_list:
+            item_id = item['id']
+            w = int(item['footprint']['width'] * SCALE)
+            d = int(item['footprint']['depth'] * SCALE)
+            intervals_x.append(model.NewIntervalVar(
+                positions[item_id]['x'], w, positions[item_id]['x'] + w, f"ix_{item_id}"
+            ))
+            intervals_y.append(model.NewIntervalVar(
+                positions[item_id]['y'], d, positions[item_id]['y'] + d, f"iy_{item_id}"
+            ))
+        model.AddNoOverlap2D(intervals_x, intervals_y)
+        print("  - Добавлено правило: NoOverlap2D.")
+
+    # Применение правил
     for rule in rules:
-        rule_type = rule.get('type')
-        target_id = rule.get('target')
+        rtype = rule.get('type')
         params = rule.get('params', {})
+        
+        # ... (Здесь будет длинный блок if/elif для каждого типа правила) ...
 
-        if target_id not in equipment_map:
-            print(f"  > ПРЕДУПРЕЖДЕНИЕ: Объект '{target_id}' из правила не найден в списке оборудования.")
-            continue
+    # Целевая функция: минимизировать общую занимаемую площадь (для компактности)
+    if equipment_list:
+        all_x_ends = [positions[item['id']]['x'] + int(item['footprint']['width'] * SCALE) for item in equipment_list]
+        all_y_ends = [positions[item['id']]['y'] + int(item['footprint']['depth'] * SCALE) for item in equipment_list]
+        
+        min_x_var = model.NewIntVar(min_x, max_x, 'min_x_all')
+        max_x_var = model.NewIntVar(min_x, max_x, 'max_x_all')
+        min_y_var = model.NewIntVar(min_y, max_y, 'min_y_all')
+        max_y_var = model.NewIntVar(min_y, max_y, 'max_y_all')
 
-        if rule_type == 'PLACE_AT':
-            pos = params.get('position', [0, 0])
-            rot = params.get('rotation_deg', 0)
-            placements[target_id] = {'x': pos[0], 'y': pos[1], 'rotation_deg': rot}
-            print(f"  - Правило PLACE_AT для '{target_id}': позиция [{pos[0]}, {pos[1]}]")
+        model.AddMinEquality(min_x_var, [positions[item['id']]['x'] for item in equipment_list])
+        model.AddMaxEquality(max_x_var, all_x_ends)
+        model.AddMinEquality(min_y_var, [positions[item['id']]['y'] for item in equipment_list])
+        model.AddMaxEquality(max_y_var, all_y_ends)
 
-        elif rule_type == 'PLACE_AFTER':
-            anchor_id = params.get('anchor')
-            if not anchor_id or anchor_id not in placements:
-                print(f"  > ОШИБКА: Якорь '{anchor_id}' для правила PLACE_AFTER еще не размещен. Проверьте порядок правил.")
-                continue
+        span_x = model.NewIntVar(0, max_x, 'span_x')
+        span_y = model.NewIntVar(0, max_y, 'span_y')
+        model.Add(span_x == max_x_var - min_x_var)
+        model.Add(span_y == max_y_var - min_y_var)
+        
+        model.Minimize(span_x + span_y)
+        print("  - Добавлена целевая функция: Минимизация общей площади.")
 
-            anchor_placement = placements[anchor_id]
-            anchor_equipment = equipment_map[anchor_id]
-            target_equipment = equipment_map[target_id]
-            
-            direction = params.get('direction', 'Y')
-            distance = params.get('distance', 1.0)
-            alignment = params.get('alignment', 'center')
+    # Запуск решателя
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = float(solver_options.get('time_limit_sec', 30.0))
+    status = solver.Solve(model)
 
-            # Координаты центра якоря
-            anchor_cx = anchor_placement['x'] + anchor_equipment['footprint']['width'] / 2
-            anchor_cy = anchor_placement['y'] + anchor_equipment['footprint']['depth'] / 2
-            
-            # Рассчитываем положение нового объекта
-            new_x, new_y = 0, 0
-            if direction == 'Y':
-                new_y = anchor_placement['y'] + anchor_equipment['footprint']['depth'] + distance
-                if alignment == 'center':
-                    new_x = anchor_cx - (target_equipment['footprint']['width'] / 2)
-                # TODO: Добавить другие типы выравнивания (left, right)
-            elif direction == 'X':
-                new_x = anchor_placement['x'] + anchor_equipment['footprint']['width'] + distance
-                if alignment == 'center':
-                    new_y = anchor_cy - (target_equipment['footprint']['depth'] / 2)
-                # TODO: Добавить другие типы выравнивания (top, bottom)
-
-            rot = params.get('rotation_deg', 0)
-            placements[target_id] = {'x': new_x, 'y': new_y, 'rotation_deg': rot}
-            print(f"  - Правило PLACE_AFTER для '{target_id}': позиция [{new_x:.2f}, {new_y:.2f}]")
-
-    print("   Расчет положений завершен.")
-    return placements
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  > Решение найдено!")
+        final_placements = {}
+        for item in equipment_list:
+            item_id = item['id']
+            final_placements[item_id] = {
+                'x': solver.Value(positions[item_id]['x']) / SCALE,
+                'y': solver.Value(positions[item_id]['y']) / SCALE,
+                'rotation_deg': 0 # TODO: Добавить обработку поворотов
+            }
+        return final_placements
+    else:
+        print(f"  > ОШИБКА: Решение не найдено. Статус: {solver.StatusName(status)}")
+        return None
