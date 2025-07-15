@@ -5,14 +5,15 @@ import time
 
 def create_element(f, context, name, placement, w, d, h):
     """Вспомогательная функция для создания одного элемента (ящика)."""
-    # Профиль теперь центрирован относительно своего placement
-    profile = f.createIfcRectangleProfileDef('AREA', None, None, w, d) 
+    # Профиль теперь создается с центром в (0,0)
+    profile = f.createIfcRectangleProfileDef('AREA', None, f.createIfcAxis2Placement2D(f.createIfcCartesianPoint((-w/2, -d/2))), w, d)
     extrusion = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), h)
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
     
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
+    # Определяем тип элемента для IFC
     if "Стена" in name:
         element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
     elif "Пол" in name:
@@ -46,18 +47,18 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
-        # Пол: центр в центре комнаты
-        floor_pos = [w / 2, d / 2, -wall_t / 2]
+        # Пол: центр в центре комнаты, на нулевой отметке
+        floor_pos = [w / 2, d / 2, 0.0]
         floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(floor_pos)))
         floor = create_element(f, context, "Пол", floor_placement, w, d, wall_t)
         all_elements.append(floor)
         
         # Стены: вычисляем центральные точки для каждой
         walls_def = [
-            {'name': 'Стена_Юг', 'pos': [w / 2, wall_t / 2, h / 2], 'dims': (w, wall_t, h)},
-            {'name': 'Стена_Север', 'pos': [w / 2, d - wall_t / 2, h / 2], 'dims': (w, wall_t, h)},
-            {'name': 'Стена_Запад', 'pos': [wall_t / 2, d / 2, h / 2], 'dims': (wall_t, d, h)},
-            {'name': 'Стена_Восток', 'pos': [w - wall_t / 2, d / 2, h / 2], 'dims': (wall_t, d, h)}
+            {'name': 'Стена_Юг',    'pos': [w / 2, 0,       h / 2], 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Север',  'pos': [w / 2, d,       h / 2], 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Запад',  'pos': [0,     d / 2,   h / 2], 'dims': (wall_t, d, h)},
+            {'name': 'Стена_Восток', 'pos': [w,     d / 2,   h / 2], 'dims': (wall_t, d, h)}
         ]
         for w_def in walls_def:
             wall_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(w_def['pos'])))
@@ -72,7 +73,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         eq_d = eq_data['footprint']['depth']
         eq_h = eq_data['height']
         
-        # ВЫЧИСЛЯЕМ ЦЕНТР ОБОРУДОВАНИЯ
+        # Вычисляем ЦЕНТР оборудования. Координаты от решателя - это левый нижний угол.
         pos = [float(placement['x']) + eq_w / 2, float(placement['y']) + eq_d / 2, eq_h / 2]
         
         eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(pos)))
