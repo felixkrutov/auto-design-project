@@ -24,9 +24,9 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
     
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
     
     print("   - Размещение оборудования...")
     equipment_map = {eq['id']: eq for eq in project_data['equipment']}
