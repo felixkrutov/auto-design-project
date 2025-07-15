@@ -1,3 +1,4 @@
+## ПОЛНЫЙ КОД ДЛЯ placement.py
 from ortools.sat.python import cp_model
 import time
 
