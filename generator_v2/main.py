@@ -1,4 +1,4 @@
-## ПОЛНЫЙ КОД ДЛЯ main.py
+# --- ПОЛНЫЙ КОД ДЛЯ main.py ---
 import json
 import os
 from placement import calculate_placements
