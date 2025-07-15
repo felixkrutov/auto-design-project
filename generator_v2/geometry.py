@@ -1,4 +1,4 @@
-# --- ПОЛНЫЙ КОД ДЛЯ geometry.py ---
+# --- ПОЛНЫЙ И ИСПРАВЛЕННЫЙ КОД ДЛЯ geometry.py ---
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
@@ -6,13 +6,19 @@ import time
 
 def create_element(f, context, name, placement, w, d, h):
     """Вспомогательная функция для создания одного элемента (ящика)."""
-    profile_placement = f.createIfcAxis2Placement2D(f.createIfcCartesianPoint((-w / 2, -d / 2)))
-    profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", profile_placement, w, d)
+    # Профиль создается от своего нижнего левого угла (0,0)
+    profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
+    
+    # Положение и направление вытягивания (вверх по Z)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
+    
+    # Создаем тело
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
+    
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
+    
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
     if "Стена" in name:
@@ -21,6 +27,7 @@ def create_element(f, context, name, placement, w, d, h):
         element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape, PredefinedType='FLOOR')
     else:
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+    
     return element
 
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
@@ -51,19 +58,18 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
-        # Пол
-        floor_pos = P(w / 2, d / 2, 0.0)
+        # Пол - его нижний левый угол в (0,0,0)
+        floor_pos = P(0.0, 0.0, 0.0)
         floor_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(floor_pos))
-        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t)
+        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t) # Пол идет вниз
         all_elements.append(floor)
         
-        # Стены
+        # Стены - вычисляем нижние левые углы для каждой
         walls_def = [
-            # ИСПРАВЛЕНИЕ ЗДЕСЬ: правильные центры для стен
-            {'name': 'Стена_Юг',    'pos': P(w / 2, 0,       h / 2), 'dims': (w + wall_t*2, wall_t, h)},
-            {'name': 'Стена_Север',  'pos': P(w / 2, d,       h / 2), 'dims': (w + wall_t*2, wall_t, h)},
-            {'name': 'Стена_Запад',  'pos': P(0,     d / 2,   h / 2), 'dims': (wall_t, d, h)},
-            {'name': 'Стена_Восток', 'pos': P(w,     d / 2,   h / 2), 'dims': (wall_t, d, h)}
+            {'name': 'Стена_Юг',    'pos': P(0.0, 0.0, 0.0), 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Север',  'pos': P(0.0, d - wall_t, 0.0), 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Запад',  'pos': P(0.0, 0.0, 0.0), 'dims': (wall_t, d, h)},
+            {'name': 'Стена_Восток', 'pos': P(w - wall_t, 0.0, 0.0), 'dims': (wall_t, d, h)}
         ]
         for w_def in walls_def:
             wall_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(w_def['pos']))
@@ -75,7 +81,10 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     for eq_id, placement in placements.items():
         eq_data = equipment_map.get(eq_id)
         eq_w, eq_d, eq_h = eq_data['footprint']['width'], eq_data['footprint']['depth'], eq_data['height']
-        pos = P(float(placement['x']) + eq_w / 2, float(placement['y']) + eq_d / 2, eq_h / 2)
+        
+        # Координаты от решателя - это и есть нижний левый угол
+        pos = P(float(placement['x']), float(placement['y']), 0.0)
+        
         eq_placement = f.createIfcLocalPlacement(None, f.createIfcAxis2Placement3D(pos))
         element = create_element(f, context, eq_data['name'], eq_placement, eq_w, eq_d, eq_h)
         all_elements.append(element)
