@@ -4,27 +4,20 @@ import ifcopenshell.api
 import ifcopenshell.guid
 import time
 
-def create_style(f, name, r, g, b):
-    """Вспомогательная функция для создания цветового стиля."""
-    color = f.createIfcColourRgb(name, r, g, b)
-    shading = f.createIfcSurfaceStyleShading(color, 0.0)
-    style = f.createIfcSurfaceStyle(name, 'BOTH', [shading])
-    return style
-
 def create_element(f, context, name, placement, w, d, h, style=None):
     """Вспомогательная функция для создания одного элемента с применением стиля через API."""
-    # 1. Создаем геометрию
+    owner_history = f.by_type("IfcOwnerHistory")[0]
+    
+    # Создаем геометрию
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
-    # 2. Создаем представление
+    # Создаем представление и продукт
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
-    owner_history = f.by_type("IfcOwnerHistory")[0]
-    
-    # 3. Создаем сам продукт (элемент)
+
     element_type = name.split('_')[0]
     if "Стена" in element_type:
         element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
@@ -33,7 +26,7 @@ def create_element(f, context, name, placement, w, d, h, style=None):
     else:
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
 
-    # 4. Применяем стиль к готовому элементу с помощью корректного API вызова
+    # Применяем стиль к готовому элементу
     if style:
         ifcopenshell.api.run("style.assign_style", f, product=element, style=style)
     
@@ -42,36 +35,42 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
-    f = ifcopenshell.file(schema="IFC4")
-    # Инициализация API для файла
-    ifcopenshell.api.run("project.create_file", f)
-    owner_history = f.by_type("IfcOwnerHistory")[0]
+    # --- ИСПРАВЛЕНИЕ: Создаем файл и всю базовую структуру одной командой API ---
+    f = ifcopenshell.api.run("project.create_file", schema_identifier="IFC4")
     
-    def P(x, y, z):
-        return f.createIfcCartesianPoint((float(x), float(y), float(z)))
-        
+    # Получаем доступ к автоматически созданным элементам
+    owner_history = f.by_type("IfcOwnerHistory")[0]
     project = f.by_type("IfcProject")[0]
     project.Name = project_data['meta']['project_name']
-    
     context = f.by_type("IfcGeometricRepresentationContext")[0]
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
+    storey = f.by_type("IfcBuildingStorey")[0]
 
-    ifcopenshell.api.run("aggregate.assign_object", f, product=site, relating_object=project)
-    ifcopenshell.api.run("aggregate.assign_object", f, product=building, relating_object=site)
-    ifcopenshell.api.run("aggregate.assign_object", f, product=storey, relating_object=building)
-    
+    def P(x, y, z):
+        return f.createIfcCartesianPoint((float(x), float(y), float(z)))
+
     print("   - Создание стилей материалов...")
-    styles_map = {
-        "floor_style": create_style(f, "FloorStyle", 0.4, 0.4, 0.8), # Синий
-        "wall_style": create_style(f, "WallStyle", 0.7, 0.7, 0.7),   # Серый
-        "silos_style": create_style(f, "SilosStyle", 0.8, 0.8, 0.8), # Светло-серый
-        "mixer_style": create_style(f, "MixerStyle", 0.9, 0.9, 0.6), # Бежевый
-        "press_style": create_style(f, "PressStyle", 0.6, 0.9, 0.6), # Светло-зеленый
-        "default_style": create_style(f, "DefaultStyle", 0.9, 0.5, 0.5) # Красноватый
-    }
+    # Создание стилей теперь происходит внутри `ifcopenshell.api.run` для style.assign_style
+    # но мы определим их здесь для удобства
+    def create_style(name, r, g, b):
+        style = ifcopenshell.api.run("style.add_style", f)
+        ifcopenshell.api.run(
+            "style.add_surface_style",
+            f,
+            style=style,
+            ifc_class="IfcSurfaceStyleShading",
+            attributes={"SurfaceColour": f.createIfcColourRgb(name, r, g, b)},
+        )
+        return style
 
+    styles_map = {
+        "floor_style": create_style("FloorStyle", 0.4, 0.4, 0.8), # Синий
+        "wall_style": create_style("WallStyle", 0.7, 0.7, 0.7),   # Серый
+        "silos_style": create_style("SilosStyle", 0.8, 0.8, 0.8), # Светло-серый
+        "mixer_style": create_style("MixerStyle", 0.9, 0.9, 0.6), # Бежевый
+        "press_style": create_style("PressStyle", 0.6, 0.9, 0.6), # Светло-зеленый
+        "default_style": create_style("DefaultStyle", 0.9, 0.5, 0.5) # Красноватый
+    }
+    
     all_elements = []
     print("   - Создание архитектуры (пол, стены)...")
     arch_data = project_data.get('architecture', {})
