@@ -4,7 +4,7 @@ import ifcopenshell.api
 import ifcopenshell.guid
 import time
 
-def create_element(f, context, name, placement, w, d, h, style=None):
+def create_element(f, body, name, placement, w, d, h, style=None):
     """Вспомогательная функция для создания одного элемента с применением стиля через API."""
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
@@ -15,7 +15,7 @@ def create_element(f, context, name, placement, w, d, h, style=None):
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
     # Создаем представление и продукт
-    shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
+    shape_rep = f.createIfcShapeRepresentation(body, 'Body', 'SweptSolid', [extrusion])
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
 
     element_type = name.split('_')[0]
@@ -35,15 +35,31 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
-    # --- ИСПРАВЛЕНИЕ: Используем правильный параметр version вместо schema_identifier ---
+    # --- ИСПРАВЛЕНИЕ: Создаем файл и базовую структуру ---
     f = ifcopenshell.api.run("project.create_file", version="IFC4")
     
-    # Получаем доступ к автоматически созданным элементам
+    # Создаем проект
+    project = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcProject", name=project_data['meta']['project_name'])
+    
+    # Создаем базовую структуру
+    ifcopenshell.api.run("unit.assign_unit", f, length={"is_metric": True, "raw": "METERS"})
+    
+    # Создаем контекст геометрии
+    context = ifcopenshell.api.run("context.add_context", f, context_type="Model")
+    body = ifcopenshell.api.run("context.add_context", f, context_type="Model", context_identifier="Body", target_view="MODEL_VIEW", parent=context)
+    
+    # Создаем структуру здания
+    site = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcSite", name="Site")
+    building = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuilding", name="Building")
+    storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Ground Floor")
+    
+    # Связываем структуру
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
+    
+    # Получаем owner_history
     owner_history = f.by_type("IfcOwnerHistory")[0]
-    project = f.by_type("IfcProject")[0]
-    project.Name = project_data['meta']['project_name']
-    context = f.by_type("IfcGeometricRepresentationContext")[0]
-    storey = f.by_type("IfcBuildingStorey")[0]
 
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
@@ -81,7 +97,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     if all([w, d, h]):
         floor_pos = P(0.0, 0.0, 0.0)
         floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(floor_pos))
-        floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t, style=styles_map["floor_style"])
+        floor = create_element(f, body, "Пол", floor_placement, w, d, -wall_t, style=styles_map["floor_style"])
         all_elements.append(floor)
         
         walls_def = [
@@ -92,7 +108,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         ]
         for w_def in walls_def:
             wall_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(w_def['pos']))
-            wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'], style=styles_map["wall_style"])
+            wall = create_element(f, body, w_def['name'], wall_placement, *w_def['dims'], style=styles_map["wall_style"])
             all_elements.append(wall)
 
     print("   - Размещение оборудования...")
@@ -110,7 +126,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         elif "пресс" in eq_name_lower: eq_style = styles_map["press_style"]
         else: eq_style = styles_map["default_style"]
 
-        element = create_element(f, context, eq_data['name'], eq_placement, eq_w, eq_d, eq_h, style=eq_style)
+        element = create_element(f, body, eq_data['name'], eq_placement, eq_w, eq_d, eq_h, style=eq_style)
         all_elements.append(element)
         print(f"     - Создан объект: '{eq_data['name']}'")
 
