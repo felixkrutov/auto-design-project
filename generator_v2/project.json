@@ -58,8 +58,8 @@
       "type": "ATTACH_TO_WALL",
       "target": "control_panel",
       "params": { "side": "Ymax", "distance": 1.0 }
-    },
-    {
+    }
+  ],
   "solver_options": {
     "time_limit_sec": 60
   }
