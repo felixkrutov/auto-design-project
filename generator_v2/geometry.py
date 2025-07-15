@@ -1,18 +1,15 @@
-import cadquery as cq
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
 import time
-# ИЗМЕНЕНИЕ ЗДЕСЬ: импортируем BytesIO
-from io import BytesIO 
 
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     """
     Создает IFC файл на основе данных проекта и рассчитанных положений.
+    Использует только ifcopenshell для максимальной надежности.
     """
     print("\n5. Создание 3D модели (IFC)...")
     
-    # --- 1. Инициализация IFC файла ---
     f = ifcopenshell.file(schema="IFC4")
     owner_history = f.createIfcOwnerHistory(
         OwningUser=f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization(Name="AutoDesign")),
@@ -23,7 +20,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0))))
     project.RepresentationContexts = [context]
     
-    # --- 2. Создание иерархии (Сайт, Здание, Этаж) ---
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
@@ -32,7 +28,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "BuildingContainer", None, building, [storey])
     
-    # --- 3. Создание оборудования ---
     print("   - Размещение оборудования...")
     equipment_map = {eq['id']: eq for eq in project_data['equipment']}
     
@@ -41,31 +36,23 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         if not equipment_data:
             continue
 
-        # Создаем геометрию с помощью CadQuery
         w = equipment_data['footprint']['width']
         d = equipment_data['footprint']['depth']
         h = equipment_data['height']
         
-        result_workplane = cq.Workplane("XY").box(w, d, h)
+        # Положение нижнего левого угла
+        x, y = placement['x'], placement['y']
         
-        # НОВЫЙ СПОСОБ СОЗДАНИЯ ГЕОМЕТРИИ
-        # ИЗМЕНЕНИЕ ЗДЕСЬ: используем BytesIO вместо StringIO
-        s = BytesIO() 
-        result_workplane.val().exportBrep(s)
-        
-        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'Brep', [])
-        # И здесь передаем байты в getvalue()
-        ifcopenshell.api.run("geometry.import_brep", f, brep=s.getvalue(), representation=shape_rep)
-        # КОНЕЦ НОВОГО СПОСОБА
-        
-        product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
+        # Создаем геометрию ящика напрямую в IFC
+        placement_point = f.createIfcCartesianPoint((x, y, 0.0))
+        axis_placement = f.createIfcAxis2Placement3D(placement_point)
+        obj_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, axis_placement)
 
-        px = placement['x'] + w / 2
-        py = placement['y'] + d / 2
-        pz = h / 2
-        
-        axis = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((px, py, pz)))
-        obj_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, axis)
+        profile = f.createIfcRectangleProfileDef('AREA', None, None, w, d)
+        extrusion = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection((0.0, 0.0, 1.0)), h)
+
+        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
+        product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
 
         element = f.createIfcBuildingElementProxy(
             ifcopenshell.guid.new(),
@@ -75,10 +62,9 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
             Representation=product_shape
         )
         
-        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "BuildingStoreyContainer", None, [element], storey)
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, None, None, [element], storey)
         print(f"     - Создан объект: '{equipment_data['name']}'")
 
-    # --- 4. Сохранение файла ---
     try:
         f.write(output_filename)
         print(f"   > Модель успешно сохранена в файл: {output_filename}")
