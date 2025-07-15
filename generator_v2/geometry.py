@@ -4,38 +4,6 @@ import ifcopenshell.api
 import ifcopenshell.guid
 import time
 
-# Эта функция-помощник нужна для старых версий ifcopenshell
-def create_ifc_representation(ifc_file, context, shape):
-    """Создает IFC представление из геометрии CadQuery."""
-    # Экспортируем в формат BREP (текстовый)
-    from io import StringIO
-    s = StringIO()
-    cq.exporters.exportShape(shape, 'BREP', s)
-    brep_str = s.getvalue()
-    
-    # Создаем IFC сущности из BREP
-    shape_rep = ifc_file.createIfcShapeRepresentation(
-        ContextOfItems=context,
-        RepresentationIdentifier='Body',
-        RepresentationType='Brep',
-        Items=[ifc_file.createIfcManifoldSolidBrep(
-            Outer=ifc_file.createIfcClosedShell(
-                CfsFaces=[ifc_file.createIfcFace(
-                    Bounds=[ifc_file.createIfcFaceOuterBound(
-                        Bound=ifc_file.createIfcPolyLoop(
-                            Polygon=[ifc_file.createIfcCartesianPoint(p) for p in face]
-                        ),
-                        Orientation=True
-                    )]
-                ) for face in []] # Этот способ не работает напрямую, используем BREP
-            )
-        )]
-    )
-    # Хитрый способ импорта BREP
-    ifcopenshell.api.run("geometry.import_brep", ifc_file, **{"brep": brep_str, "representation": shape_rep})
-    return shape_rep
-
-
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     """
     Создает IFC файл на основе данных проекта и рассчитанных положений.
@@ -76,12 +44,15 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         d = equipment_data['footprint']['depth']
         h = equipment_data['height']
         
-        result_shape = cq.Workplane("XY").box(w, d, h).val()
+        # ИЗМЕНЕНИЕ ЗДЕСЬ: создаем объект, но не вызываем .val()
+        result_workplane = cq.Workplane("XY").box(w, d, h)
         
         # НОВЫЙ СПОСОБ СОЗДАНИЯ ГЕОМЕТРИИ
         from io import StringIO
         s = StringIO()
-        cq.exporters.exportShape(result_shape, 'BREP', s)
+        # И ИЗМЕНЕНИЕ ЗДЕСЬ: экспортируем напрямую из Workplane
+        result_workplane.val().exportBrep(s)
+        
         shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'Brep', [])
         ifcopenshell.api.run("geometry.import_brep", f, brep=s.getvalue(), representation=shape_rep)
         # КОНЕЦ НОВОГО СПОСОБА
