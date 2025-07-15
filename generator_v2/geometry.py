@@ -3,6 +3,8 @@ import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
 import time
+# ИЗМЕНЕНИЕ ЗДЕСЬ: импортируем BytesIO
+from io import BytesIO 
 
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     """
@@ -44,16 +46,15 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         d = equipment_data['footprint']['depth']
         h = equipment_data['height']
         
-        # ИЗМЕНЕНИЕ ЗДЕСЬ: создаем объект, но не вызываем .val()
         result_workplane = cq.Workplane("XY").box(w, d, h)
         
         # НОВЫЙ СПОСОБ СОЗДАНИЯ ГЕОМЕТРИИ
-        from io import StringIO
-        s = StringIO()
-        # И ИЗМЕНЕНИЕ ЗДЕСЬ: экспортируем напрямую из Workplane
+        # ИЗМЕНЕНИЕ ЗДЕСЬ: используем BytesIO вместо StringIO
+        s = BytesIO() 
         result_workplane.val().exportBrep(s)
         
         shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'Brep', [])
+        # И здесь передаем байты в getvalue()
         ifcopenshell.api.run("geometry.import_brep", f, brep=s.getvalue(), representation=shape_rep)
         # КОНЕЦ НОВОГО СПОСОБА
         
