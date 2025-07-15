@@ -1,7 +1,7 @@
 {
   "meta": {
-    "project_name": "Макаронный Завод 'PastaPrime'",
-    "schema_version": "1.1"
+    "project_name": "Макаронный Завод 'PastaPrime' v2",
+    "schema_version": "1.2"
   },
   "architecture": {
     "room_dimensions": { "width": 50.0, "depth": 40.0, "height": 12.0 },
@@ -13,20 +13,14 @@
       "footprint": { "width": 6.0, "depth": 6.0 }, "height": 10.0
     },
     {
-      "id": "silos_mu_B", "name": "Силос муки Б",
-      "footprint": { "width": 6.0, "depth": 6.0 }, "height": 10.0
-    },
-    {
       "id": "mixer_1", "name": "Смеситель теста 1",
-      "footprint": { "width": 3.0, "depth": 5.0 }, "height": 4.0
+      "footprint": { "width": 3.0, "depth": 5.0 }, "height": 4.0,
+      "maintenance_zone": {"front": 1.5, "back": 1.0, "left": 1.0, "right": 1.0}
     },
     {
       "id": "press_1", "name": "Пресс-экструдер 1",
-      "footprint": { "width": 3.5, "depth": 10.0 }, "height": 5.0
-    },
-    {
-      "id": "dryer_1", "name": "Основная сушилка 1",
-      "footprint": { "width": 5.0, "depth": 20.0 }, "height": 6.0
+      "footprint": { "width": 3.5, "depth": 10.0 }, "height": 5.0,
+      "maintenance_zone": {"front": 2.0, "back": 1.0, "left": 1.5, "right": 1.5}
     },
     {
       "id": "control_panel", "name": "Пульт управления",
@@ -36,24 +30,13 @@
   "rules": [
     {
       "type": "AVOID_ZONE",
-      "comment": "Колонна 1",
-      "params": { "area": [5.0, 5.0, 6.0, 6.0] }
-    },
-    {
-      "type": "AVOID_ZONE",
-      "comment": "Колонна 2",
-      "params": { "area": [25.0, 15.0, 26.0, 16.0] }
+      "comment": "Главный проход",
+      "params": { "area": [22.0, 0.0, 28.0, 40.0] }
     },
     {
       "type": "PLACE_IN_ZONE",
       "target": "silos_mu_A",
-      "params": { "area": [1.0, 1.0, 20.0, 20.0] }
-    },
-    {
-      "type": "ALIGN",
-      "target1": "silos_mu_A",
-      "target2": "silos_mu_B",
-      "params": { "axis": "Y", "offset": 1.0 }
+      "params": { "area": [1.0, 25.0, 20.0, 39.0] }
     },
     {
       "type": "PLACE_AFTER",
@@ -68,31 +51,22 @@
       "target": "press_1",
       "params": {
         "anchor": "mixer_1",
-        "direction": "Y", "distance": 2.0, "alignment": "center"
-      }
-    },
-    {
-      "type": "PLACE_AFTER",
-      "target": "dryer_1",
-      "params": {
-        "anchor": "press_1",
-        "direction": "Y", "distance": 3.0, "alignment": "center"
+        "direction": "Y", "distance": 0.0, "alignment": "center"
       }
     },
     {
       "type": "ATTACH_TO_WALL",
       "target": "control_panel",
-      "params": { "side": "Xmin", "distance": 1.0 }
+      "params": { "side": "Ymax", "distance": 1.0 }
     },
     {
-      "type": "MIN_DISTANCE",
-      "target1": "dryer_1",
-      "target2": "control_panel",
-      "params": { "distance": 5.0 }
+      "type": "ALIGN",
+      "target1": "mixer_1",
+      "target2": "press_1",
+      "params": { "axis": "X" }
     }
   ],
   "solver_options": {
-    "time_limit_sec": 60,
-    "no_overlap": true
+    "time_limit_sec": 60
   }
 }
