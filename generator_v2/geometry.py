@@ -1,3 +1,4 @@
+## ПОЛНЫЙ КОД ДЛЯ geometry.py
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
@@ -5,14 +6,12 @@ import time
 
 def create_element(f, context, name, placement, w, d, h):
     """Вспомогательная функция для создания одного элемента (ящика)."""
-    # Профиль теперь создается с центром в (0,0) относительно своей точки вставки
+    # Профиль создается с центром в (0,0), поэтому смещаем его на -w/2, -d/2
     profile_placement = f.createIfcAxis2Placement2D(f.createIfcCartesianPoint((-w / 2, -d / 2)))
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", profile_placement, w, d)
     
-    # Положение вытягивания (по умолчанию из (0,0,0))
+    # Положение и направление вытягивания
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
-    
-    # Направление вытягивания (вверх по Z)
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     
     # Создаем тело
@@ -42,7 +41,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     # Обертка для создания точек, которая нравится ifcopenshell
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
-        
+            
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, project_data['meta']['project_name'])
     context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(P(0.0, 0.0, 0.0)))
     project.RepresentationContexts = [context]
