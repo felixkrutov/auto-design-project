@@ -6,6 +6,8 @@ import time
 
 def create_element(f, context, name, placement, w, d, h, style=None):
     """Вспомогательная функция для создания одного элемента с применением стиля через API."""
+    # Получаем IfcOwnerHistory из файла. Предполагается, что он уже создан.
+    # Это безопасно после того, как мы сами его создадим в create_3d_model.
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
     # Создаем геометрию
@@ -35,20 +37,52 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
-    # --- ИСПРАВЛЕНИЕ: Создаем пустой файл, а затем инициализируем его с помощью API ---
+    # --- ИСПРАВЛЕНИЕ: Создаем пустой файл, а затем вручную инициализируем корневые сущности ---
     f = ifcopenshell.file(schema="IFC4")
-    # ИСХОДНО: ifcopenshell.api.run("project.initialise", f)
-    # ИСПРАВЛЕНО: используем root.create_root для корректной инициализации
-    ifcopenshell.api.run("root.create_root", f) 
     
-    # Теперь безопасно получаем доступ к автоматически созданным элементам
-    # (Они создаются вызовом root.create_root)
-    project = f.by_type("IfcProject")[0]
-    project.Name = project_data['meta']['project_name']
-    context = f.by_type("IfcGeometricRepresentationContext")[0]
+    # 1. Создаем IfcOwnerHistory
+    # Это базовая информация о создателе и истории файла.
+    # owner_history - это сущность, которая будет использоваться во многих других сущностях.
+    application = f.createIfcApplication(
+        f.createIfcOrganization("IfcOpenShell", "IfcOpenShell", None, None, None), 
+        "0.7.0", # Или текущая версия ifcopenshell
+        "IfcOpenShell", 
+        "IfcOpenShell"
+    )
+    person = f.createIfcPerson(None, "Automation", None, None, None, None, None, None, None)
+    organization = f.createIfcOrganization(None, "AutoDesign Inc.", None, None, None)
+    owner_history = f.createIfcOwnerHistory(
+        person, application, organization, 
+        1, # ChangeAction: ADD (создание)
+        time.time(), # CreationDate
+        None, None, None # LastModifiedDate, LastModifyingApplication, DocumentationControl
+    )
+    
+    # 2. Создаем IfcProject
+    project = f.createIfcProject(
+        ifcopenshell.guid.new(), owner_history, project_data['meta']['project_name'], 
+        None, None, None, None, # GlobalId, OwnerHistory, Name, Description, ObjectType, LongName
+        'NOTDEFINED' # PredefinedType
+    )
+    
+    # 3. Создаем IfcGeometricRepresentationContext
+    # Это определяет координатную систему и единицы измерения для 3D-модели.
+    # Для этого часто удобнее использовать API, который позаботится о дополнительных деталях (единицы, оси).
+    context = ifcopenshell.api.run("context.add_context", f, 
+                                   context_type="Model", 
+                                   target_view="MODEL_VIEW", 
+                                   name="Body")
+
+    # Связываем IfcProject с IfcGeometricRepresentationContext
+    # Если context.add_context не привязал его автоматически, то так
+    ifcopenshell.api.run("context.assign_context", f, 
+                          product_representation=context, 
+                          relating_context=project)
+    
+    # Теперь безопасно получаем доступ к IfcProject, который мы только что создали.
+    # project.Name = project_data['meta']['project_name'] # Уже установлено выше
     
     # Создаем и привязываем нашу собственную структуру здания
-    owner_history = f.by_type("IfcOwnerHistory")[0] # Получаем OwnerHistory, созданный root.create_root
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
