@@ -1,38 +1,80 @@
-import json
-import os
-from placement import calculate_placements
-from geometry import create_3d_model
+import ifcopenshell
+import ifcopenshell.api
+import ifcopenshell.guid
+import time
 
-def run_generation_pipeline(project_file: str, output_file: str):
-    print(f"--- Запуск пайплайна для файла: {project_file} ---")
-
-    try:
-        with open(project_file, 'r', encoding='utf-8') as f:
-            project_data = json.load(f)
-        print("1. Файл задания project.json успешно загружен.")
-    except Exception as e:
-        print(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
-        return
-
-    print(f"2. Начинаем обработку проекта: '{project_data['meta']['project_name']}'")
+def create_element(f, context, name, placement, w, d, h):
+    """Вспомогательная функция для создания одного элемента (ящика)."""
+    profile = f.createIfcRectangleProfileDef('AREA', None, None, w, d)
+    extrusion = f.createIfcExtrudedAreaSolid(profile, None, f.createIfcDirection([0.0, 0.0, 1.0]), h)
+    shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
+    product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
     
-    # ИЗМЕНЕНИЕ ЗДЕСЬ: передаем все данные, а не по частям
-    final_placements = calculate_placements(project_data)
+    owner_history = f.by_type("IfcOwnerHistory")[0]
     
-    if not final_placements:
-        print("ОШИБКА: Не удалось рассчитать положения. Прерывание.")
-        return
+    if "Стена" in name:
+        element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+    elif "Пол" in name:
+        element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape, PredefinedType='FLOOR')
+    else:
+        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+    
+    return element
 
-    print("\n4. Итоговые координаты:")
-    for eq_id, placement in final_placements.items():
-        print(f"  - Объект '{eq_id}': X={placement['x']:.2f}, Y={placement['y']:.2f}")
+def create_3d_model(project_data: dict, placements: dict, output_filename: str):
+    print("\n5. Создание 3D модели (IFC)...")
+    
+    f = ifcopenshell.file(schema="IFC4")
+    owner_history = f.createIfcOwnerHistory(f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization(Name="AutoDesign")), f.createIfcApplication(f.createIfcOrganization(Name="GeneratorV2"), "2.0", "GeneratorV2", "G2"), CreationDate=int(time.time()))
+    project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, project_data['meta']['project_name'])
+    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint([0.0, 0.0, 0.0])))
+    project.RepresentationContexts = [context]
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
+    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
+    
+    all_elements = []
 
-    create_3d_model(project_data, final_placements, output_file)
+    print("   - Создание архитектуры (пол, стены)...")
+    arch_data = project_data.get('architecture', {})
+    room_dims = arch_data.get('room_dimensions', {})
+    wall_t = arch_data.get('wall_thickness', 0.2)
+    w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
-    print(f"\n--- Пайплайн успешно завершен. Результат в файле: {output_file} ---")
+    if all([w, d, h]):
+        floor_pos = [0.0, 0.0, -float(wall_t)]
+        floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(floor_pos)))
+        floor = create_element(f, context, "Пол", floor_placement, w, d, wall_t)
+        all_elements.append(floor)
+        
+        walls_def = [
+            {'name': 'Стена_Юг', 'pos': [0.0, 0.0, 0.0], 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Север', 'pos': [0.0, d - wall_t, 0.0], 'dims': (w, wall_t, h)},
+            {'name': 'Стена_Запад', 'pos': [0.0, 0.0, 0.0], 'dims': (wall_t, d, h)},
+            {'name': 'Стена_Восток', 'pos': [w - wall_t, 0.0, 0.0], 'dims': (wall_t, d, h)}
+        ]
+        for w_def in walls_def:
+            wall_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(w_def['pos'])))
+            wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'])
+            all_elements.append(wall)
 
-if __name__ == "__main__":
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    input_json_path = os.path.join(SCRIPT_DIR, "project.json")
-    output_ifc_path = os.path.join(SCRIPT_DIR, "output_model.ifc")
-    run_generation_pipeline(input_json_path, output_ifc_path)
+    print("   - Размещение оборудования...")
+    equipment_map = {eq['id']: eq for eq in project_data['equipment']}
+    for eq_id, placement in placements.items():
+        eq_data = equipment_map.get(eq_id)
+        pos = [float(placement['x']), float(placement['y']), 0.0]
+        dims = (eq_data['footprint']['width'], eq_data['footprint']['depth'], eq_data['height'])
+        
+        eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(f.createIfcCartesianPoint(pos)))
+        element = create_element(f, context, eq_data['name'], eq_placement, *dims)
+        all_elements.append(element)
+        print(f"     - Создан объект: '{eq_data['name']}'")
+
+    if all_elements:
+        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Содержимое этажа", None, all_elements, storey)
+
+    f.write(output_filename)
+    print(f"   > Модель успешно сохранена в файл: {output_filename}")
