@@ -1,4 +1,5 @@
 import json
+from placement import calculate_placements # <-- НОВЫЙ ИМПОРТ
 
 def run_generation_pipeline(project_file: str):
     """Главный пайплайн генерации завода."""
@@ -16,16 +17,23 @@ def run_generation_pipeline(project_file: str):
     # --- ЭТАП 2: Обработка данных ---
     project_name = project_data.get('meta', {}).get('project_name', 'Без имени')
     equipment_list = project_data.get('equipment', [])
+    rules_list = project_data.get('rules', [])
     
     print(f"2. Начинаем обработку проекта: '{project_name}'")
     print(f"   Найдено единиц оборудования: {len(equipment_list)}")
-    for item in equipment_list:
-        print(f"     - ID: {item.get('id', 'N/A')}, Имя: {item.get('name', 'N/A')}")
+    print(f"   Найдено правил: {len(rules_list)}")
+    
+    # --- ЭТАП 3: Расчет положений --- # <-- НОВЫЙ ЭТАП
+    final_placements = calculate_placements(equipment_list, rules_list)
+    
+    if final_placements:
+         print("\n4. Итоговые координаты:")
+         for eq_id, placement in final_placements.items():
+             print(f"  - Объект '{eq_id}': X={placement['x']:.2f}, Y={placement['y']:.2f}, Поворот={placement['rotation_deg']}°")
 
-    # --- Следующие этапы будут здесь ---
+    # --- Следующие этапы будут здесь (генерация 3D) ---
 
-    print("--- Пайплайн завершен (пока частично) ---")
+    print("\n--- Пайплайн завершен (пока частично) ---")
 
 if __name__ == "__main__":
-    # Важно! При запуске из корня проекта, путь должен быть полный
-    run_generation_pipeline("generator_v2/project.json")
+    run_generation_pipeline("project.json")
