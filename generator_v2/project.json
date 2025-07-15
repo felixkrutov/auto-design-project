@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "project_name": "Мини-цех 'Макарошка'",
+    "schema_version": "1.0"
+  },
+  "equipment": [
+    {
+      "id": "mixer_01",
+      "name": "Тестомес М-100"
+    },
+    {
+      "id": "extruder_01",
+      "name": "Экструдер П-200"
+    }
+  ]
+}
