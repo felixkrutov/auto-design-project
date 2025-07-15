@@ -37,17 +37,21 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     
     # --- ИСПРАВЛЕНИЕ: Создаем пустой файл, а затем инициализируем его с помощью API ---
     f = ifcopenshell.file(schema="IFC4")
-    ifcopenshell.api.run("project.initialise", f)
+    # ИСХОДНО: ifcopenshell.api.run("project.initialise", f)
+    # ИСПРАВЛЕНО: используем root.create_root для корректной инициализации
+    ifcopenshell.api.run("root.create_root", f) 
     
     # Теперь безопасно получаем доступ к автоматически созданным элементам
+    # (Они создаются вызовом root.create_root)
     project = f.by_type("IfcProject")[0]
     project.Name = project_data['meta']['project_name']
     context = f.by_type("IfcGeometricRepresentationContext")[0]
     
     # Создаем и привязываем нашу собственную структуру здания
-    site = f.createIfcSite(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Участок")
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Производственный корпус")
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), f.by_type("IfcOwnerHistory")[0], "Первый этаж")
+    owner_history = f.by_type("IfcOwnerHistory")[0] # Получаем OwnerHistory, созданный root.create_root
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
     ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
@@ -84,6 +88,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
+        # Пол теперь создается на уровне Z=0, а его толщина идет вниз (-wall_t)
         floor_pos = P(0.0, 0.0, 0.0)
         floor_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(floor_pos))
         floor = create_element(f, context, "Пол", floor_placement, w, d, -wall_t, style=styles_map["floor_style"])
