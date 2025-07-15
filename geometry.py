@@ -72,9 +72,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
                                    target_view="MODEL_VIEW", 
                                    context_identifier="Body")
 
-    length_unit = f.createIfcSIUnit(None, "LENGTHUNIT", None, "METRE")
-    unit_assignment = f.createIfcUnitAssignment([length_unit])
-    project.UnitsInContext = unit_assignment
+    ifcopenshell.api.run("unit.assign_unit", f)
 
     ifcopenshell.api.run("context.assign_context", f, 
                           product_representation=context, 
