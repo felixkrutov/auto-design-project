@@ -24,7 +24,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     # --- 2. Создание иерархии (Сайт, Здание, Этаж) ---
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж", ElementComposition="ELEMENT")
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
     
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "ProjectContainer", None, project, [site])
     f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, "SiteContainer", None, site, [building])
