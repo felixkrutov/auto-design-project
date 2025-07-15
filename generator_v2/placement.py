@@ -53,7 +53,6 @@ def calculate_placements(project_data: dict) -> dict:
             x1, y1, x2, y2 = params['area']
             print(f"    - Правило AVOID_ZONE для зоны [{x1},{y1},{x2},{y2}]")
             for box in virtual_boxes:
-                # Этот код остается без изменений...
                 is_left = model.NewBoolVar(f"az_left_{i}_{box['id']}")
                 is_right = model.NewBoolVar(f"az_right_{i}_{box['id']}")
                 is_below = model.NewBoolVar(f"az_below_{i}_{box['id']}")
@@ -75,7 +74,6 @@ def calculate_placements(project_data: dict) -> dict:
             model.Add(box['vy'] + box['vd'] <= int(y2 * SCALE))
 
         elif rtype == 'ATTACH_TO_WALL':
-            # Этот код остается без изменений...
             target_id = rule.get('target')
             side = params.get('side')
             dist = int(params.get('distance', 0) * SCALE)
@@ -85,9 +83,8 @@ def calculate_placements(project_data: dict) -> dict:
             elif side == 'Xmax': model.Add(box['vx'] + box['vw'] == max_x_room - dist)
             elif side == 'Ymin': model.Add(box['vy'] == min_y_room + dist)
             elif side == 'Ymax': model.Add(box['vy'] + box['vd'] == max_y_room - dist)
-
+            
         elif rtype == 'ALIGN':
-            # Этот код остается без изменений...
             t1, t2 = rule.get('target1'), rule.get('target2')
             axis = params.get('axis')
             print(f"    - Правило ALIGN для '{t1}' и '{t2}' по оси {axis}")
@@ -102,28 +99,37 @@ def calculate_placements(project_data: dict) -> dict:
             target_id, anchor_id = rule.get('target'), params.get('anchor')
             print(f"    - МЯГКОЕ Правило PLACE_AFTER: '{target_id}' после '{anchor_id}'")
             
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: МЫ БОЛЬШЕ НЕ ДОБАВЛЯЕМ ЖЕСТКОЕ ПРАВИЛО ---
-            # model.Add(positions[target_id]['y'] >= positions[anchor_id]['y'] + d_anchor)
-            
-            # Вместо этого мы добавляем "штраф" за нарушение этого правила
-            # Штраф будет равен 0, если правило выполняется, и > 0, если нет.
             d_anchor = int(equipment_map[anchor_id]['footprint']['depth'] * SCALE)
             penalty_var = model.NewIntVar(0, max_y_room, f"penalty_{target_id}")
-            # penalty = max(0, (y_anchor + d_anchor) - y_target)
             model.Add(penalty_var >= (positions[anchor_id]['y'] + d_anchor) - positions[target_id]['y'])
-            
-            # Добавляем этот штраф в общую стоимость, которую нужно минимизировать
-            # Умножаем на большой коэффициент, чтобы это было очень важное правило
             flow_costs.append(penalty_var * 10) 
 
-    # Целевая функция
-    total_cost = model.NewIntVar(0, 1000 * max_y_room * 10, 'total_cost')
-    model.Add(total_cost == sum(flow_costs))
-    model.Minimize(total_cost)
-    print("  - Добавлена целевая функция: Минимизация нарушений тех. потока.")
+    # --- Целевая функция ---
+    flow_penalty = model.NewIntVar(0, 1000 * max_y_room * 10, 'flow_penalty')
+    model.Add(flow_penalty == sum(flow_costs))
 
-    # Запуск решателя
-    # ... (код остается без изменений) ...
+    distances = []
+    for i in range(len(virtual_boxes)):
+        for j in range(i + 1, len(virtual_boxes)):
+            box1 = virtual_boxes[i]
+            box2 = virtual_boxes[j]
+            
+            dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{i}_{j}")
+            dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{i}_{j}")
+            model.AddAbsEquality(dist_x, box1['vx'] - box2['vx'])
+            model.AddAbsEquality(dist_y, box1['vy'] - box2['vy'])
+            distances.append(dist_x)
+            distances.append(dist_y)
+    
+    total_spread = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_spread')
+    model.Add(total_spread == sum(distances))
+
+    FLOW_WEIGHT = 1000 
+    model.Minimize(flow_penalty * FLOW_WEIGHT - total_spread)
+
+    print("  - Добавлена сложная целевая функция: (Штраф за поток * ВЕС) - (Общий разброс).")
+
+    # --- Запуск решателя ---
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = float(solver_options.get('time_limit_sec', 30.0))
     status = solver.Solve(model)
