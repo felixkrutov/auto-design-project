@@ -7,30 +7,30 @@ import time
 def create_style(f, name, r, g, b):
     """Вспомогательная функция для создания цветового стиля."""
     color = f.createIfcColourRgb(name, r, g, b)
-    shading = f.createIfcSurfaceStyleShading(color, 0.0) # 0.0 for transparency
+    shading = f.createIfcSurfaceStyleShading(color, 0.0)
     style = f.createIfcSurfaceStyle(name, 'BOTH', [shading])
     return style
 
 def create_element(f, context, name, placement, w, d, h, style=None):
-    """Вспомогательная функция для создания одного элемента (ящика) с применением стиля."""
+    """Вспомогательная функция для создания одного элемента с применением стиля через API."""
+    # 1. Создаем геометрию как обычно
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
+    # 2. Создаем представление (пока без стиля)
+    shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
+    
+    # 3. Применяем стиль к представлению с помощью надежного API
     if style:
-        style_assignment = f.createIfcPresentationStyleAssignment([style])
-        styled_item = f.createIfcStyledItem(extrusion, [style_assignment], None)
-        # ИСПРАВЛЕНИЕ: Тип представления должен оставаться 'SweptSolid', даже если используется стиль.
-        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [styled_item])
-    else:
-        shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
+        ifcopenshell.api.run("style.apply_style_to_representation", f, representation=shape_rep, style=style)
         
+    # 4. Создаем продукт и связываем с представлением
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
     element_type = name.split('_')[0]
-
     if "Стена" in element_type:
         element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
     elif "Пол" in element_type:
