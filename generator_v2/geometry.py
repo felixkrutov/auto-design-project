@@ -13,23 +13,18 @@ def create_style(f, name, r, g, b):
 
 def create_element(f, context, name, placement, w, d, h, style=None):
     """Вспомогательная функция для создания одного элемента с применением стиля через API."""
-    # 1. Создаем геометрию как обычно
+    # 1. Создаем геометрию
     profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
     extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
     extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
     extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, h)
     
-    # 2. Создаем представление (пока без стиля)
+    # 2. Создаем представление
     shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
-    
-    # 3. Применяем стиль к представлению с помощью надежного API
-    if style:
-        ifcopenshell.api.run("style.apply_style_to_representation", f, representation=shape_rep, style=style)
-        
-    # 4. Создаем продукт и связываем с представлением
     product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
+    # 3. Создаем сам продукт (элемент)
     element_type = name.split('_')[0]
     if "Стена" in element_type:
         element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
@@ -37,6 +32,10 @@ def create_element(f, context, name, placement, w, d, h, style=None):
         element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape, PredefinedType='FLOOR')
     else:
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+
+    # 4. Применяем стиль к готовому элементу с помощью корректного API вызова
+    if style:
+        ifcopenshell.api.run("style.assign_style", f, product=element, style=style)
     
     return element
 
@@ -44,20 +43,24 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("\n5. Создание 3D модели (IFC)...")
     
     f = ifcopenshell.file(schema="IFC4")
-    owner_history = f.createIfcOwnerHistory(f.createIfcPersonAndOrganization(f.createIfcPerson(), f.createIfcOrganization(Name="AutoDesign")), f.createIfcApplication(f.createIfcOrganization(Name="GeneratorV2"), "2.0", "GeneratorV2", "G2"), CreationDate=int(time.time()))
+    # Инициализация API для файла
+    ifcopenshell.api.run("project.create_file", f)
+    owner_history = f.by_type("IfcOwnerHistory")[0]
     
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
         
-    project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, project_data['meta']['project_name'])
-    context = f.createIfcGeometricRepresentationContext(None, "Model", 3, 1.0E-5, f.createIfcAxis2Placement3D(P(0.0, 0.0, 0.0)))
-    project.RepresentationContexts = [context]
+    project = f.by_type("IfcProject")[0]
+    project.Name = project_data['meta']['project_name']
+    
+    context = f.by_type("IfcGeometricRepresentationContext")[0]
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
     storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, project, [site])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, site, [building])
-    f.createIfcRelAggregates(ifcopenshell.guid.new(), owner_history, None, None, building, [storey])
+
+    ifcopenshell.api.run("aggregate.assign_object", f, product=site, relating_object=project)
+    ifcopenshell.api.run("aggregate.assign_object", f, product=building, relating_object=site)
+    ifcopenshell.api.run("aggregate.assign_object", f, product=storey, relating_object=building)
     
     print("   - Создание стилей материалов...")
     styles_map = {
@@ -113,7 +116,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
         print(f"     - Создан объект: '{eq_data['name']}'")
 
     if all_elements:
-        f.createIfcRelContainedInSpatialStructure(ifcopenshell.guid.new(), owner_history, "Содержимое этажа", None, all_elements, storey)
+        ifcopenshell.api.run("spatial.assign_container", f, products=all_elements, relating_structure=storey)
 
     f.write(output_filename)
     print(f"   > Модель успешно сохранена в файл: {output_filename}")
