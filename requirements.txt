@@ -1,3 +1,5 @@
 pandas
 ortools
-ifcopenshell
+ifcopenshell==0.7.0
+cadquery==2.4.0
+ortools
