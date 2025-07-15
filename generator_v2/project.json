@@ -60,12 +60,6 @@
       "params": { "side": "Ymax", "distance": 1.0 }
     },
     {
-      "type": "ALIGN",
-      "target1": "mixer_1",
-      "target2": "press_1",
-      "params": { "axis": "X" }
-    }
-  ],
   "solver_options": {
     "time_limit_sec": 60
   }
