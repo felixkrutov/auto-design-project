@@ -54,9 +54,9 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     storey = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcBuildingStorey", name="Ground Floor")
     
     # Связываем структуру
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
+    ifcopenshell.api.run("aggregate.assign_object", f, products=[site], relating_object=project)
+    ifcopenshell.api.run("aggregate.assign_object", f, products=[building], relating_object=site)
+    ifcopenshell.api.run("aggregate.assign_object", f, products=[storey], relating_object=building)
     
     # Получаем owner_history
     owner_history = f.by_type("IfcOwnerHistory")[0]
