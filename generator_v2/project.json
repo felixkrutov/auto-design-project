@@ -1,7 +1,7 @@
 {
   "meta": {
     "project_name": "Макаронный Завод 'PastaPrime' v2",
-    "schema_version": "1.2"
+    "schema_version": "1.3"
   },
   "architecture": {
     "room_dimensions": { "width": 50.0, "depth": 40.0, "height": 12.0 },
@@ -9,21 +9,21 @@
   },
   "equipment": [
     {
-      "id": "silos_mu_A", "name": "Силос муки А",
+      "id": "silos_mu_A", "name": "Силос муки А", "model_file": "",
       "footprint": { "width": 6.0, "depth": 6.0 }, "height": 10.0
     },
     {
-      "id": "mixer_1", "name": "Смеситель теста 1",
+      "id": "mixer_1", "name": "Смеситель теста 1", "model_file": "",
       "footprint": { "width": 3.0, "depth": 5.0 }, "height": 4.0,
       "maintenance_zone": {"front": 1.5, "back": 1.0, "left": 1.0, "right": 1.0}
     },
     {
-      "id": "press_1", "name": "Пресс-экструдер 1",
+      "id": "press_1", "name": "Пресс-экструдер 1", "model_file": "",
       "footprint": { "width": 3.5, "depth": 10.0 }, "height": 5.0,
       "maintenance_zone": {"front": 2.0, "back": 1.0, "left": 1.5, "right": 1.5}
     },
     {
-      "id": "control_panel", "name": "Пульт управления",
+      "id": "control_panel", "name": "Пульт управления", "model_file": "",
       "footprint": { "width": 2.0, "depth": 1.5 }, "height": 2.0
     }
   ],
