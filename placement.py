@@ -1,4 +1,3 @@
-# --- ПОЛНЫЙ И ОКОНЧАТЕЛЬНО ИСПРАВЛЕННЫЙ КОД ДЛЯ placement.py ---
 from ortools.sat.python import cp_model
 
 def get_box_by_id(boxes, target_id):
@@ -34,15 +33,12 @@ def calculate_placements(project_data: dict) -> dict:
         w = int((m_zone.get('left', 0) + item['footprint']['width'] + m_zone.get('right', 0)) * SCALE)
         d = int((m_zone.get('back', 0) + item['footprint']['depth'] + m_zone.get('front', 0)) * SCALE)
         
-        # Смещение реального объекта внутри виртуального ящика
         x_offset = int(m_zone.get('left', 0) * SCALE)
         y_offset = int(m_zone.get('back', 0) * SCALE)
 
-        # Координаты виртуального ящика (с зоной обслуживания)
         vx = model.NewIntVar(min_x_room, max_x_room - w, f"vx_{item['id']}")
         vy = model.NewIntVar(min_y_room, max_y_room - d, f"vy_{item['id']}")
         
-        # Координаты реального объекта (левый-нижний угол)
         px = model.NewIntVar(min_x_room, max_x_room, f"x_{item['id']}")
         py = model.NewIntVar(min_y_room, max_y_room, f"y_{item['id']}")
         
@@ -58,6 +54,8 @@ def calculate_placements(project_data: dict) -> dict:
     print("  - Добавлено глобальное правило: NoOverlap2D (с учетом зон обслуживания).")
     
     print("  - Применение правил из project.json...")
+    connected_pairs = set()
+
     for i, rule in enumerate(rules):
         rtype = rule.get('type')
         params = rule.get('params', {})
@@ -115,63 +113,71 @@ def calculate_placements(project_data: dict) -> dict:
             if axis == 'X': model.Add(center1_x == center2_x)
             else: model.Add(center1_y == center2_y)
 
-        # --- ИСПРАВЛЕННАЯ ЛОГИКА ---
         elif rtype == 'PLACE_AFTER':
-            target_box = get_box_by_id(virtual_boxes, rule.get('target'))
-            anchor_box = get_box_by_id(virtual_boxes, params.get('anchor'))
+            target_id = rule.get('target')
+            anchor_id = params.get('anchor')
+            target_box = get_box_by_id(virtual_boxes, target_id)
+            anchor_box = get_box_by_id(virtual_boxes, anchor_id)
             direction = params.get('direction', 'Y')
             distance = int(params.get('distance', 0) * SCALE)
             alignment = params.get('alignment', 'none')
+            
+            # Сохраняем пару связанных объектов для целевой функции
+            # Используем tuple(sorted(...)) для создания канонического представления пары
+            connected_pairs.add(tuple(sorted((anchor_id, target_id))))
 
             print(f"    - Жесткое правило PLACE_AFTER: '{target_box['id']}' после '{anchor_box['id']}'")
 
-            # Размеры реальных объектов (footprint)
             anchor_w = int(equipment_map[anchor_box['id']]['footprint']['width'] * SCALE)
             anchor_d = int(equipment_map[anchor_box['id']]['footprint']['depth'] * SCALE)
             target_w = int(equipment_map[target_box['id']]['footprint']['width'] * SCALE)
             target_d = int(equipment_map[target_box['id']]['footprint']['depth'] * SCALE)
 
-            # Размещение по направлению
             if direction == 'Y':
-                # Нижняя грань target_box == Верхняя грань anchor_box + distance
                 model.Add(target_box['py'] == anchor_box['py'] + anchor_d + distance)
             elif direction == 'X':
-                 # Левая грань target_box == Правая грань anchor_box + distance
                 model.Add(target_box['px'] == anchor_box['px'] + anchor_w + distance)
             
-            # Выравнивание
             if alignment == 'center':
-                if direction == 'Y': # Выравниваем по оси X
+                if direction == 'Y':
                     center_anchor = anchor_box['px'] + anchor_w // 2
                     center_target = target_box['px'] + target_w // 2
                     model.Add(center_target == center_anchor)
-                elif direction == 'X': # Выравниваем по оси Y
+                elif direction == 'X':
                     center_anchor = anchor_box['py'] + anchor_d // 2
                     center_target = target_box['py'] + target_d // 2
                     model.Add(center_target == center_anchor)
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
+    # --- Целевая функция: Минимизация взвешенной суммы расстояний ---
+    all_distances = []
+    all_weights = []
 
-    # --- Целевая функция (упрощенная, т.к. основные правила стали жесткими) ---
-    distances = []
     for i in range(len(virtual_boxes)):
         for j in range(i + 1, len(virtual_boxes)):
             box1 = virtual_boxes[i]
             box2 = virtual_boxes[j]
-            dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{i}_{j}")
-            dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{i}_{j}")
-            # Мы минимизируем сумму расстояний между центрами виртуальных боксов
+            id1, id2 = box1['id'], box2['id']
+
+            dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{id1}_{id2}")
+            dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{id1}_{id2}")
+            
+            # Расстояние между центрами виртуальных боксов (включая зоны обслуживания)
             model.AddAbsEquality(dist_x, (box1['vx'] + box1['vw']//2) - (box2['vx'] + box2['vw']//2))
             model.AddAbsEquality(dist_y, (box1['vy'] + box1['vd']//2) - (box2['vy'] + box2['vd']//2))
-            distances.append(dist_x)
-            distances.append(dist_y)
-    
-    total_distance = model.NewIntVar(0, 1000 * (max_x_room + max_y_room), 'total_distance')
-    model.Add(total_distance == sum(distances))
+            
+            all_distances.extend([dist_x, dist_y])
 
-    # Цель: максимально разнести объекты друг от друга (максимизировать сумму расстояний)
-    model.Maximize(total_distance)
-    print("  - Добавлена целевая функция: Максимизация общего расстояния между объектами.")
+            # Определяем вес для этой пары. 
+            # OR-Tools работает с целыми числами, поэтому используем 1 и 10 вместо 0.1 и 1.0.
+            # Низкий вес (1) для связанных пар, т.к. их расстояние уже задано жестким правилом.
+            # Высокий вес (10) для всех остальных, чтобы решатель пытался их сблизить.
+            current_pair = tuple(sorted((id1, id2)))
+            weight = 1 if current_pair in connected_pairs else 10
+            all_weights.extend([weight, weight])
+
+    # Цель - минимизировать сумму произведений расстояний на их веса.
+    model.Minimize(sum(dist * weight for dist, weight in zip(all_distances, all_weights)))
+    print("  - Добавлена целевая функция: Минимизация взвешенного расстояния между объектами.")
 
     # --- Запуск решателя ---
     solver = cp_model.CpSolver()
