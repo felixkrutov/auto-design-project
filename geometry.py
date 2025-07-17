@@ -23,7 +23,9 @@ def create_element(f, context, name, placement, w, d, h, style=None):
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None)
 
     if style:
-        ifcopenshell.api.run("style.assign_style", f, product=element, style=style)
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # Правильное имя usecase - "style.assign", а не "style.assign_style"
+        ifcopenshell.api.run("style.assign", f, product=element, style=style)
     
     return element
 
@@ -89,9 +91,6 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("   - Создание стилей материалов...")
     def create_style(name, r, g, b):
         style = ifcopenshell.api.run("style.add_style", f)
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Вместо создания IfcColourRgb вручную, передаем словарь с параметрами.
-        # API ifcopenshell сам создаст нужный объект на основе словаря.
         ifcopenshell.api.run(
             "style.add_surface_style",
             f,
