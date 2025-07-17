@@ -22,10 +22,16 @@ def create_element(f, context, name, placement, w, d, h, style=None):
     else:
         element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None)
 
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Заменяем неработающий API вызов на низкоуровневое создание связей для стиля.
+    # Этот метод более надежен, так как напрямую использует создание IFC-сущностей.
     if style:
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Правильное имя usecase - "style.assign", а не "style.assign_style"
-        ifcopenshell.api.run("style.assign", f, product=element, style=style)
+        style_assignment = f.createIfcPresentationStyleAssignment([style])
+        styled_item = f.createIfcStyledItem(
+            Item=element.Representation.Representations[0],
+            Styles=[style_assignment],
+            Name=None
+        )
     
     return element
 
