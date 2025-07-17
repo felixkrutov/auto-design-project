@@ -16,11 +16,11 @@ def create_element(f, context, name, placement, w, d, h, style=None):
 
     element_type = name.split('_')[0]
     if "Стена" in element_type:
-        element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+        element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None)
     elif "Пол" in element_type:
-        element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape, PredefinedType='FLOOR')
+        element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None, 'FLOOR')
     else:
-        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, ObjectPlacement=placement, Representation=product_shape)
+        element = f.createIfcBuildingElementProxy(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None)
 
     if style:
         ifcopenshell.api.run("style.assign_style", f, product=element, style=style)
@@ -76,12 +76,12 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
 
     project.RepresentationContexts = [context]
     
-    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
-    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
-    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, product=site)
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, product=building)
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, product=storey)
+    site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок", None, None, None, None, None, None, None, None, None, None, None)
+    building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус", None, None, None, None, None, None, None, None, None)
+    storey = f.createIfcBuildingStorey(ifcopenshell.guid.new(), owner_history, "Первый этаж", None, None, None, None, None, None, None)
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=project, products=[site])
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=site, products=[building])
+    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[storey])
 
     def P(x, y, z):
         return f.createIfcCartesianPoint((float(x), float(y), float(z)))
