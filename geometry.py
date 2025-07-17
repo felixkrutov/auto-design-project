@@ -74,9 +74,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
 
     ifcopenshell.api.run("unit.assign_unit", f)
 
-    ifcopenshell.api.run("context.assign_context", f, 
-                          product_representation=context, 
-                          relating_context=project)
+    project.RepresentationContexts = [context]
     
     site = f.createIfcSite(ifcopenshell.guid.new(), owner_history, "Участок")
     building = f.createIfcBuilding(ifcopenshell.guid.new(), owner_history, "Производственный корпус")
