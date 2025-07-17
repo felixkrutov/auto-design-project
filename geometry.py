@@ -89,12 +89,17 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     print("   - Создание стилей материалов...")
     def create_style(name, r, g, b):
         style = ifcopenshell.api.run("style.add_style", f)
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # Вместо создания IfcColourRgb вручную, передаем словарь с параметрами.
+        # API ifcopenshell сам создаст нужный объект на основе словаря.
         ifcopenshell.api.run(
             "style.add_surface_style",
             f,
             style=style,
             ifc_class="IfcSurfaceStyleShading",
-            attributes={"SurfaceColour": f.createIfcColourRgb(name, r, g, b)},
+            attributes={
+                "SurfaceColour": {"Name": name, "Red": r, "Green": g, "Blue": b}
+            },
         )
         return style
 
