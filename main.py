@@ -1,71 +1,89 @@
 import logging
 
-# Подавляем информационные сообщения от ifcopenshell.api, оставляем только ошибки.
-# Это нужно сделать до импорта других модулей проекта, которые используют ifcopenshell.
+# Suppress informational messages from ifcopenshell.api, leaving only errors.
+# This must be done before importing any project modules that use ifcopenshell.
 logging.getLogger('ifcopenshell').setLevel(logging.ERROR)
 
 import json
 import os
 import sys
-from placement import calculate_placements
-from geometry import create_3d_model
+from pydantic import ValidationError
+
+from src.core.models import Project
+from src.placer.service import calculate_placements
+from src.generator.service import create_3d_model
 
 def run_generation_pipeline(project_file: str, output_file: str):
     """
-    Выполняет полный цикл проектирования: загрузка, расчет размещения, генерация 3D модели.
+    Executes the full design pipeline: loads data, validates it, calculates placements,
+    and generates the final 3D model.
     """
-    print(f"--- Запуск пайплайна для файла: {project_file} ---")
+    print(f"--- Starting pipeline for file: {project_file} ---")
 
+    # Step 1: Load raw data from JSON file
     try:
         with open(project_file, 'r', encoding='utf-8') as f:
             project_data = json.load(f)
-        print("1. Файл задания project.json успешно загружен.")
+        print("1. Project data file successfully loaded.")
     except FileNotFoundError:
-        print(f"КРИТИЧЕСКАЯ ОШИБКА: Файл проекта '{project_file}' не найден.")
+        print(f"CRITICAL ERROR: Project file '{project_file}' not found.")
         sys.exit(1)
     except json.JSONDecodeError as e:
-        print(f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось прочитать JSON файл. Ошибка: {e}")
+        print(f"CRITICAL ERROR: Could not parse JSON file. Error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"КРИТИЧЕСКАЯ ОШИБКА: Произошла непредвиденная ошибка при загрузке данных: {e}")
+        print(f"CRITICAL ERROR: An unexpected error occurred while loading data: {e}")
         sys.exit(1)
 
-    project_name = project_data.get('meta', {}).get('project_name', 'UnnamedProject')
-    print(f"2. Начинаем обработку проекта: '{project_name}'")
+    # Step 1.5: Validate the raw data using Pydantic models
+    try:
+        project = Project.parse_obj(project_data)
+        print("1.5. Project data successfully validated against the model.")
+    except ValidationError as e:
+        print(f"CRITICAL ERROR: The project file '{project_file}' has an invalid data structure.")
+        print("Validation Details:")
+        print(e)
+        sys.exit(1)
+
+    # Step 2: Begin processing with validated data
+    print(f"2. Processing project: '{project.meta.project_name}'")
     
-    final_placements = calculate_placements(project_data)
+    # Step 3: Calculate placements using the validated project object
+    final_placements = calculate_placements(project)
     
     if not final_placements:
-        print("ОШИБКА: Не удалось рассчитать положения. Генерация 3D модели прервана.")
+        print("ERROR: Could not calculate placements. Halting generation.")
         return
 
-    print("\n4. Итоговые координаты:")
+    # Step 4: Display final coordinates
+    print("\n4. Final Coordinates:")
     for eq_id, placement in final_placements.items():
-        print(f"  - Объект '{eq_id}': X={placement['x']:.2f}, Y={placement['y']:.2f}")
+        print(f"  - Item '{eq_id}': X={placement['x']:.2f}, Y={placement['y']:.2f}")
 
-    create_3d_model(project_data, final_placements, output_file)
+    # Step 5: Create 3D model using the validated project object
+    create_3d_model(project, final_placements, output_file)
 
-    print(f"\n--- Пайплайн успешно завершен. Результат в файле: {output_file} ---")
+    print(f"\n--- Pipeline finished successfully. Result saved to: {output_file} ---")
 
 if __name__ == "__main__":
-    # Определяем директорию, в которой запущен скрипт
+    # Determine the directory where the script is running
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     
-    # Путь к файлу проекта по умолчанию
+    # Default path for the project file
     input_json_path = os.path.join(SCRIPT_DIR, "project.json")
     
-    # Если в командной строке передан аргумент, используем его как путь к файлу проекта
+    # If a command-line argument is provided, use it as the path to the project file
     if len(sys.argv) > 1:
         input_json_path = sys.argv[1]
-        print(f"Используется файл проекта из аргумента командной строки: {input_json_path}")
+        print(f"Using project file from command-line argument: {input_json_path}")
 
-    # Создаем директорию output, если она не существует
+    # Ensure the output directory exists
     output_dir = os.path.join(SCRIPT_DIR, "output")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        print(f"Создана директория для выходных файлов: {output_dir}")
+        print(f"Created output directory: {output_dir}")
 
-    # Имя выходного файла формируется на основе имени входного файла
+    # The output filename is based on the input filename
     base_name = os.path.splitext(os.path.basename(input_json_path))[0]
     output_ifc_path = os.path.join(output_dir, f"{base_name}_model.ifc")
     
