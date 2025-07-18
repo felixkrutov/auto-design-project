@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
 class Meta(BaseModel):
@@ -18,12 +18,22 @@ class RoomDimensions(BaseModel):
     height: float = Field(..., gt=0, description="The total internal height of the room (Z-axis).")
 
 
+class RoofConfig(BaseModel):
+    """
+    Defines the configuration for the building's roof, including its type and dimensions.
+    """
+    type: Literal["FLAT", "GABLE"] = Field(..., description="The structural type of the roof.")
+    height: Optional[float] = Field(default=None, gt=0, description="The height of the roof's peak, used for GABLE type.")
+    thickness: Optional[float] = Field(default=None, gt=0, description="The thickness of the roof slab, used for FLAT type.")
+
+
 class Architecture(BaseModel):
     """
-    Architectural parameters of the factory space, including room size and wall thickness.
+    Architectural parameters of the factory space, including room size, wall thickness, and roof configuration.
     """
     room_dimensions: RoomDimensions = Field(..., description="The internal dimensions of the room.")
     wall_thickness: float = Field(..., ge=0, description="The thickness of the surrounding walls.")
+    roof: Optional[RoofConfig] = Field(default=None, description="Optional configuration for the building's roof.")
 
 
 class Footprint(BaseModel):
