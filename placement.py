@@ -120,13 +120,12 @@ def calculate_placements(project_data: dict) -> dict:
             anchor_box = get_box_by_id(virtual_boxes, anchor_id)
             direction = params.get('direction', 'Y')
             distance = int(params.get('distance', 0) * SCALE)
-            alignment = params.get('alignment', 'none')
-            
-            # Сохраняем пару связанных объектов для целевой функции
-            # Используем tuple(sorted(...)) для создания канонического представления пары
+            # --- ИЗМЕНЕНИЕ: выравнивание по центру теперь по умолчанию ---
+            alignment = params.get('alignment', 'center')
+
             connected_pairs.add(tuple(sorted((anchor_id, target_id))))
 
-            print(f"    - Жесткое правило PLACE_AFTER: '{target_box['id']}' после '{anchor_box['id']}'")
+            print(f"    - Жесткое правило PLACE_AFTER: '{target_box['id']}' после '{anchor_box['id']}', выравнивание: {alignment}")
 
             anchor_w = int(equipment_map[anchor_box['id']]['footprint']['width'] * SCALE)
             anchor_d = int(equipment_map[anchor_box['id']]['footprint']['depth'] * SCALE)
@@ -138,12 +137,13 @@ def calculate_placements(project_data: dict) -> dict:
             elif direction == 'X':
                 model.Add(target_box['px'] == anchor_box['px'] + anchor_w + distance)
             
+            # Логика выравнивания по центру (для перпендикулярной оси)
             if alignment == 'center':
-                if direction == 'Y':
+                if direction == 'Y': # Выравниваем по оси X
                     center_anchor = anchor_box['px'] + anchor_w // 2
                     center_target = target_box['px'] + target_w // 2
                     model.Add(center_target == center_anchor)
-                elif direction == 'X':
+                elif direction == 'X': # Выравниваем по оси Y
                     center_anchor = anchor_box['py'] + anchor_d // 2
                     center_target = target_box['py'] + target_d // 2
                     model.Add(center_target == center_anchor)
@@ -161,21 +161,15 @@ def calculate_placements(project_data: dict) -> dict:
             dist_x = model.NewIntVar(0, max_x_room, f"dist_x_{id1}_{id2}")
             dist_y = model.NewIntVar(0, max_y_room, f"dist_y_{id1}_{id2}")
             
-            # Расстояние между центрами виртуальных боксов (включая зоны обслуживания)
             model.AddAbsEquality(dist_x, (box1['vx'] + box1['vw']//2) - (box2['vx'] + box2['vw']//2))
             model.AddAbsEquality(dist_y, (box1['vy'] + box1['vd']//2) - (box2['vy'] + box2['vd']//2))
             
             all_distances.extend([dist_x, dist_y])
 
-            # Определяем вес для этой пары. 
-            # OR-Tools работает с целыми числами, поэтому используем 1 и 10 вместо 0.1 и 1.0.
-            # Низкий вес (1) для связанных пар, т.к. их расстояние уже задано жестким правилом.
-            # Высокий вес (10) для всех остальных, чтобы решатель пытался их сблизить.
             current_pair = tuple(sorted((id1, id2)))
             weight = 1 if current_pair in connected_pairs else 10
             all_weights.extend([weight, weight])
 
-    # Цель - минимизировать сумму произведений расстояний на их веса.
     model.Minimize(sum(dist * weight for dist, weight in zip(all_distances, all_weights)))
     print("  - Добавлена целевая функция: Минимизация взвешенного расстояния между объектами.")
 
