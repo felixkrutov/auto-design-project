@@ -158,6 +158,7 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
         "floor_style": create_surface_style(f, "FloorStyle", 0.4, 0.4, 0.45, transparency=0.0),
         "wall_style": create_surface_style(f, "WallStyle", 0.75, 0.75, 0.75, transparency=0.0),
         "roof_style": create_surface_style(f, "RoofStyle", 0.2, 0.6, 0.3, transparency=0.0),
+        "flat_roof_style": create_surface_style(f, "FlatRoofStyle", 0.5, 0.5, 0.5, transparency=0.0),
         "mixer_style": create_surface_style(f, "MixerStyle", 0.9, 0.9, 0.6),
         "press_style": create_surface_style(f, "PressStyle", 0.6, 0.9, 0.6),
         "default_style": create_surface_style(f, "DefaultStyle", 0.9, 0.5, 0.5)
@@ -166,7 +167,6 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
     all_elements = []
     print("   - Creating architecture (floor, walls, roof)...")
     
-    # Access architecture data safely from the Pydantic model
     arch = project.architecture
     room = arch.room_dimensions
     wall_t = max(0.5, arch.wall_thickness)
@@ -188,38 +188,71 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
         wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'], style=styles_map["wall_style"])
         all_elements.append(wall)
 
-    print("     - Creating roof...")
-    gable_height = w / 4.0
-    
-    profile_points = [P(0.0, 0.0, 0.0), P(w, 0.0, 0.0), P(w / 2.0, 0.0, gable_height)]
-    polyline = f.createIfcPolyline(profile_points)
-    closed_profile = f.createIfcArbitraryClosedProfileDef("AREA", "Roof_Profile", polyline)
-    
-    extrusion_dir = f.createIfcDirection((0.0, 1.0, 0.0))
-    roof_extrusion = f.createIfcExtrudedAreaSolid(closed_profile, None, extrusion_dir, d)
-    
-    roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h))
-    roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
-    
-    shape_rep = f.createIfcShapeRepresentation(context, "Body", "SweptSolid", [roof_extrusion])
-    apply_style_to_representation(f, shape_rep, styles_map["roof_style"])
-    product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
-    
-    roof = f.createIfcRoof(ifcopenshell.guid.new(), owner_history, "Крыша", None, None, roof_placement, product_shape, "GABLE_ROOF")
-    ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[roof])
+    # --- REFACTORED ROOF LOGIC ---
+    roof_extrusion, roof_placement, roof_style = None, None, None
+    roof_config = project.architecture.roof
+
+    if roof_config:
+        print(f"     - Creating roof of type: {roof_config.type}...")
+        roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h)) # Base placement on top of walls
+        roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
+
+        if roof_config.type == 'GABLE':
+            # Use configured height, with a sensible default
+            gable_height = roof_config.height if roof_config.height is not None else w / 4.0
+            
+            profile_points = [P(0.0, 0.0, 0.0), P(w, 0.0, 0.0), P(w / 2.0, 0.0, gable_height)]
+            polyline = f.createIfcPolyline(profile_points)
+            closed_profile = f.createIfcArbitraryClosedProfileDef("AREA", "Gable_Roof_Profile", polyline)
+            
+            extrusion_dir = f.createIfcDirection((0.0, 1.0, 0.0))
+            roof_extrusion = f.createIfcExtrudedAreaSolid(closed_profile, None, extrusion_dir, d)
+            roof_style = styles_map["roof_style"]
+
+        elif roof_config.type == 'FLAT':
+            # Use configured thickness, with a sensible default
+            roof_thickness = roof_config.thickness if roof_config.thickness is not None else 0.3
+            
+            flat_profile = f.createIfcRectangleProfileDef('AREA', 'Flat_Roof_Profile', None, w, d)
+            extrusion_dir = f.createIfcDirection((0.0, 0.0, 1.0))
+            # The placement is already at height h, so we just extrude up by the thickness
+            roof_extrusion = f.createIfcExtrudedAreaSolid(flat_profile, None, extrusion_dir, roof_thickness)
+            roof_style = styles_map["flat_roof_style"]
+
+    else: # Fallback for backward compatibility
+        print("     - Creating roof (using fallback/legacy logic)...")
+        gable_height = w / 4.0
+        
+        profile_points = [P(0.0, 0.0, 0.0), P(w, 0.0, 0.0), P(w / 2.0, 0.0, gable_height)]
+        polyline = f.createIfcPolyline(profile_points)
+        closed_profile = f.createIfcArbitraryClosedProfileDef("AREA", "Gable_Roof_Profile", polyline)
+        
+        extrusion_dir = f.createIfcDirection((0.0, 1.0, 0.0))
+        roof_extrusion = f.createIfcExtrudedAreaSolid(closed_profile, None, extrusion_dir, d)
+        
+        roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h))
+        roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
+        roof_style = styles_map["roof_style"]
+
+    # Common roof creation logic
+    if roof_extrusion and roof_placement:
+        shape_rep = f.createIfcShapeRepresentation(context, "Body", "SweptSolid", [roof_extrusion])
+        apply_style_to_representation(f, shape_rep, roof_style)
+        product_shape = f.createIfcProductDefinitionShape(None, None, [shape_rep])
+        
+        roof = f.createIfcRoof(ifcopenshell.guid.new(), owner_history, "Крыша", None, None, roof_placement, product_shape, "NOTDEFINED")
+        ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[roof])
+
+    # --- END OF ROOF LOGIC ---
 
     print("   - Placing equipment...")
-    # Create a mapping from equipment ID to the EquipmentItem object for easy lookup
     equipment_map: Dict[str, EquipmentItem] = {eq.id: eq for eq in project.equipment}
     
     for eq_id, placement in placements.items():
         eq_data = equipment_map.get(eq_id)
         if not eq_data: continue
 
-        # Access equipment data safely from the Pydantic model
-        eq_w = eq_data.footprint.width
-        eq_d = eq_data.footprint.depth
-        eq_h = eq_data.height
+        eq_w, eq_d, eq_h = eq_data.footprint.width, eq_data.footprint.depth, eq_data.height
         pos = P(placement['x'], placement['y'], 0.0)
         
         eq_placement = f.createIfcLocalPlacement(storey.ObjectPlacement, f.createIfcAxis2Placement3D(pos))
