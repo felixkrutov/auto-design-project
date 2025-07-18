@@ -18,6 +18,7 @@ def calculate_placements(project_data: dict) -> dict:
 
     model = cp_model.CpModel()
     SCALE = 100
+    PENALTY_COST = 10000 # Большой штраф за нарушение мягкого ограничения
 
     min_x_room = int(wall_thickness * SCALE)
     max_x_room = int((room_dims['width'] - wall_thickness) * SCALE)
@@ -55,6 +56,7 @@ def calculate_placements(project_data: dict) -> dict:
     
     print("  - Применение правил из project.json...")
     connected_pairs = set()
+    alignment_penalties = []
 
     for i, rule in enumerate(rules):
         rtype = rule.get('type')
@@ -94,11 +96,12 @@ def calculate_placements(project_data: dict) -> dict:
             elif side == 'Ymax': model.Add(box['vy'] + box['vd'] == max_y_room - dist)
             
         elif rtype == 'ALIGN':
+            # Это правило остается жестким
             t1_id, t2_id = rule.get('target1'), rule.get('target2')
             box1 = get_box_by_id(virtual_boxes, t1_id)
             box2 = get_box_by_id(virtual_boxes, t2_id)
             axis = params.get('axis')
-            print(f"    - Правило ALIGN для '{t1_id}' и '{t2_id}' по оси {axis}")
+            print(f"    - Жесткое правило ALIGN для '{t1_id}' и '{t2_id}' по оси {axis}")
             
             w1 = int(equipment_map[t1_id]['footprint']['width'] * SCALE)
             d1 = int(equipment_map[t1_id]['footprint']['depth'] * SCALE)
@@ -120,35 +123,39 @@ def calculate_placements(project_data: dict) -> dict:
             anchor_box = get_box_by_id(virtual_boxes, anchor_id)
             direction = params.get('direction', 'Y')
             distance = int(params.get('distance', 0) * SCALE)
-            # --- ИЗМЕНЕНИЕ: выравнивание по центру теперь по умолчанию ---
             alignment = params.get('alignment', 'center')
 
             connected_pairs.add(tuple(sorted((anchor_id, target_id))))
 
-            print(f"    - Жесткое правило PLACE_AFTER: '{target_box['id']}' после '{anchor_box['id']}', выравнивание: {alignment}")
+            print(f"    - Правило PLACE_AFTER: '{target_id}' после '{anchor_id}', выравнивание: {alignment} (мягкое)")
 
-            anchor_w = int(equipment_map[anchor_box['id']]['footprint']['width'] * SCALE)
-            anchor_d = int(equipment_map[anchor_box['id']]['footprint']['depth'] * SCALE)
-            target_w = int(equipment_map[target_box['id']]['footprint']['width'] * SCALE)
-            target_d = int(equipment_map[target_box['id']]['footprint']['depth'] * SCALE)
+            anchor_w = int(equipment_map[anchor_id]['footprint']['width'] * SCALE)
+            anchor_d = int(equipment_map[anchor_id]['footprint']['depth'] * SCALE)
+            target_w = int(equipment_map[target_id]['footprint']['width'] * SCALE)
+            target_d = int(equipment_map[target_id]['footprint']['depth'] * SCALE)
 
             if direction == 'Y':
                 model.Add(target_box['py'] == anchor_box['py'] + anchor_d + distance)
             elif direction == 'X':
                 model.Add(target_box['px'] == anchor_box['px'] + anchor_w + distance)
             
-            # Логика выравнивания по центру (для перпендикулярной оси)
             if alignment == 'center':
-                if direction == 'Y': # Выравниваем по оси X
+                is_aligned = model.NewBoolVar(f"align_{anchor_id}_{target_id}")
+                
+                if direction == 'Y':
                     center_anchor = anchor_box['px'] + anchor_w // 2
                     center_target = target_box['px'] + target_w // 2
-                    model.Add(center_target == center_anchor)
-                elif direction == 'X': # Выравниваем по оси Y
+                    model.Add(center_target == center_anchor).OnlyEnforceIf(is_aligned)
+                elif direction == 'X':
                     center_anchor = anchor_box['py'] + anchor_d // 2
                     center_target = target_box['py'] + target_d // 2
-                    model.Add(center_target == center_anchor)
+                    model.Add(center_target == center_anchor).OnlyEnforceIf(is_aligned)
+                
+                # Добавляем штраф в целевую функцию за невыполнение выравнивания
+                # is_aligned.Not() равно 1, если is_aligned=False, и 0, если is_aligned=True
+                alignment_penalties.append(PENALTY_COST * is_aligned.Not())
 
-    # --- Целевая функция: Минимизация взвешенной суммы расстояний ---
+    # --- Целевая функция: Минимизация взвешенной суммы расстояний и штрафов ---
     all_distances = []
     all_weights = []
 
@@ -169,9 +176,12 @@ def calculate_placements(project_data: dict) -> dict:
             current_pair = tuple(sorted((id1, id2)))
             weight = 1 if current_pair in connected_pairs else 10
             all_weights.extend([weight, weight])
-
-    model.Minimize(sum(dist * weight for dist, weight in zip(all_distances, all_weights)))
-    print("  - Добавлена целевая функция: Минимизация взвешенного расстояния между объектами.")
+    
+    weighted_distance_sum = sum(dist * weight for dist, weight in zip(all_distances, all_weights))
+    total_penalty = sum(alignment_penalties)
+    
+    model.Minimize(weighted_distance_sum + total_penalty)
+    print("  - Добавлена целевая функция: Минимизация взвешенного расстояния и штрафов за невыровненность.")
 
     # --- Запуск решателя ---
     solver = cp_model.CpSolver()
