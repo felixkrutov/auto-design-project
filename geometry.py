@@ -108,7 +108,6 @@ def create_element(f, context, name, placement, w, d, h, style=None):
         profile = f.createIfcRectangleProfileDef('AREA', name + "_profile", None, w, d)
         extrusion_placement = f.createIfcAxis2Placement3D(f.createIfcCartesianPoint((0.0, 0.0, 0.0)))
         extrusion_direction = f.createIfcDirection((0.0, 0.0, 1.0))
-        # Экструзия всегда с положительной высотой/глубиной
         extrusion = f.createIfcExtrudedAreaSolid(profile, extrusion_placement, extrusion_direction, abs(h))
         
         shape_rep = f.createIfcShapeRepresentation(context, 'Body', 'SweptSolid', [extrusion])
@@ -118,7 +117,6 @@ def create_element(f, context, name, placement, w, d, h, style=None):
         if "Стена" in element_type:
             element = f.createIfcWall(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None)
         elif "Пол" in element_type:
-            # Пол экструдируется вниз от z=0
             placement.RelativePlacement.Location.Coordinates = (placement.RelativePlacement.Location.Coordinates[0], placement.RelativePlacement.Location.Coordinates[1], h)
             element = f.createIfcSlab(ifcopenshell.guid.new(), owner_history, name, None, None, placement, product_shape, None, 'FLOOR')
         else:
@@ -134,12 +132,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     
     f = ifcopenshell.file(schema="IFC4")
     
-    owner_history = f.createIfcOwnerHistory(
-        f.createIfcPersonAndOrganization(),
-        f.createIfcApplication(),
-        None, 'ADDED', int(time.time())
-    )
-    
+    owner_history = f.createIfcOwnerHistory(f.createIfcPersonAndOrganization(), f.createIfcApplication(), None, 'ADDED', int(time.time()))
     project = f.createIfcProject(ifcopenshell.guid.new(), owner_history, project_data['meta']['project_name'])
     
     context = ifcopenshell.api.run("context.add_context", f, context_type="Model", target_view="MODEL_VIEW", context_identifier="Body")
@@ -157,9 +150,9 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
 
     print("   - Создание стилей материалов...")
     styles_map = {
-        "floor_style": create_surface_style(f, "FloorStyle", 0.4, 0.4, 0.45),
-        "wall_style": create_surface_style(f, "WallStyle", 0.7, 0.7, 0.7, transparency=0.0), # Стены непрозрачные
-        "roof_style": create_surface_style(f, "RoofStyle", 0.2, 0.6, 0.3, transparency=0.0), # Зеленая крыша
+        "floor_style": create_surface_style(f, "FloorStyle", 0.4, 0.4, 0.45, transparency=0.0),
+        "wall_style": create_surface_style(f, "WallStyle", 0.75, 0.75, 0.75, transparency=0.0), # Непрозрачные стены
+        "roof_style": create_surface_style(f, "RoofStyle", 0.2, 0.6, 0.3, transparency=0.0), # Непрозрачная крыша
         "mixer_style": create_surface_style(f, "MixerStyle", 0.9, 0.9, 0.6),
         "press_style": create_surface_style(f, "PressStyle", 0.6, 0.9, 0.6),
         "default_style": create_surface_style(f, "DefaultStyle", 0.9, 0.5, 0.5)
@@ -170,7 +163,7 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
     arch_data = project_data.get('architecture', {})
     room_dims = arch_data.get('room_dimensions', {})
     wall_t = max(0.5, arch_data.get('wall_thickness', 0.5)) # Толщина стен не менее 0.5
-    slab_t = 0.2 # Толщина плиты пола
+    slab_t = 0.2
     w, d, h = room_dims.get('width'), room_dims.get('depth'), room_dims.get('height')
 
     if all([w, d, h]):
@@ -189,20 +182,22 @@ def create_3d_model(project_data: dict, placements: dict, output_filename: str):
             wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'], style=styles_map["wall_style"])
             all_elements.append(wall)
 
-        # --- Создание двускатной крыши ---
         print("     - Создание крыши...")
-        gable_height = w / 4  # Высота конька крыши
+        gable_height = w / 4.0
         
-        # 1. Профиль крыши (треугольник)
-        profile_points = [P(0.0, 0.0), P(w, 0.0), P(w/2, gable_height)]
+        # --- ИСПРАВЛЕНИЕ: Профиль крыши должен использовать 3D-точки (P) в плоскости XZ ---
+        # Профиль находится в плоскости XZ (y=0) и будет выдавливаться вдоль оси Y.
+        profile_points = [
+            P(0.0, 0.0, 0.0),      # Нижняя левая точка
+            P(w, 0.0, 0.0),        # Нижняя правая точка
+            P(w / 2.0, 0.0, gable_height) # Верхняя точка (конёк)
+        ]
         polyline = f.createIfcPolyline(profile_points)
         closed_profile = f.createIfcArbitraryClosedProfileDef("AREA", "Roof_Profile", polyline)
         
-        # 2. Тело экструзии
-        extrusion_dir = f.createIfcDirection((0.0, 1.0, 0.0)) # Выдавливаем по оси Y
+        extrusion_dir = f.createIfcDirection((0.0, 1.0, 0.0)) # Выдавливаем по оси Y на глубину d
         roof_extrusion = f.createIfcExtrudedAreaSolid(closed_profile, None, extrusion_dir, d)
         
-        # 3. Размещение и создание IfcRoof
         roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h)) # Поднимаем крышу на высоту стен
         roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
         
