@@ -4,24 +4,18 @@ from typing import Dict, List
 from src.core.models import Project, EquipmentItem
 
 def get_box_by_id(boxes: List[Dict], target_id: str) -> Dict:
-    """Helper function to find a 'virtual box' by its ID within the solver's internal list."""
     try:
         return next(b for b in boxes if b['id'] == target_id)
     except StopIteration:
         raise ValueError(f"Rule error: Could not find an object with ID '{target_id}'")
 
 def calculate_placements(project: Project) -> Dict[str, Dict[str, float]]:
-    """
-    Calculates the optimal 2D placements for equipment using the OR-Tools CP-SAT solver,
-    based on the validated project data model.
-    """
     print("3. Calculating equipment placements with OR-Tools...")
     
     model = cp_model.CpModel()
     SCALE = 100
-    PENALTY_COST = 10000 # Large penalty for violating a soft constraint
+    PENALTY_COST = 10000
 
-    # Safely access data from the Pydantic model
     room_dims = project.architecture.room_dimensions
     wall_thickness = project.architecture.wall_thickness
     
@@ -36,11 +30,9 @@ def calculate_placements(project: Project) -> Dict[str, Dict[str, float]]:
 
     positions = {}
     virtual_boxes = []
-    # Create a direct mapping from ID to EquipmentItem for quick lookups
     equipment_map: Dict[str, EquipmentItem] = {item.id: item for item in project.equipment}
 
     for item in project.equipment:
-        # Use maintenance_zone if it exists, otherwise default values are 0
         m_zone_left = item.maintenance_zone.left if item.maintenance_zone else 0.0
         m_zone_right = item.maintenance_zone.right if item.maintenance_zone else 0.0
         m_zone_back = item.maintenance_zone.back if item.maintenance_zone else 0.0
