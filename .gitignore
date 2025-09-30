@@ -1,16 +1,13 @@
-# Виртуальное окружение
+
 venv/
 /venv/
 
-# Кэш Python
 __pycache__/
 *.pyc
 
-# Сгенерированные файлы
 *.ifc
 task.json
 
-# Локальные настройки IDE
 .idea/
 .vscode/
 !models/*.ifc
