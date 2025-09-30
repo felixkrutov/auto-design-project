@@ -8,10 +8,8 @@ from typing import Dict
 
 from src.core.models import Project, EquipmentItem
 
-# Suppress informational messages from ifcopenshell.api, leaving only errors
 logging.getLogger('ifcopenshell').setLevel(logging.ERROR)
 
-# Attempt to import pythonOCC. If unavailable, simplified geometry will be used.
 try:
     from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Ax2
     from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeCone
@@ -21,9 +19,6 @@ except ImportError:
     OCC_AVAILABLE = False
 
 def create_surface_style(f: ifcopenshell.file, name: str, r: float, g: float, b: float, transparency: float = 0.0):
-    """
-    Creates and returns an IfcSurfaceStyle using direct entity creation.
-    """
     rendering = f.create_entity(
         "IfcSurfaceStyleRendering",
         SurfaceColour=f.createIfcColourRgb(None, r, g, b),
@@ -35,9 +30,6 @@ def create_surface_style(f: ifcopenshell.file, name: str, r: float, g: float, b:
     return style
 
 def apply_style_to_representation(f: ifcopenshell.file, representation, style):
-    """
-    Applies a style to the items of a shape representation.
-    """
     if not style or not representation or not representation.Items:
         return
         
@@ -48,10 +40,6 @@ def apply_style_to_representation(f: ifcopenshell.file, representation, style):
     )
 
 def create_element(f: ifcopenshell.file, context, name: str, placement, w: float, d: float, h: float, style=None):
-    """
-    Creates an IFC element. If the name contains "silos" and pythonOCC is available,
-    it creates complex geometry. Otherwise, it creates a simple extruded box.
-    """
     owner_history = f.by_type("IfcOwnerHistory")[0]
     
     if "силос" in name.lower() and OCC_AVAILABLE:
@@ -130,9 +118,6 @@ def create_element(f: ifcopenshell.file, context, name: str, placement, w: float
         return element
 
 def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], output_filename: str):
-    """
-    Generates the final IFC 3D model from the validated project data and calculated placements.
-    """
     print("\n5. Creating 3D model (IFC)...")
     
     f = ifcopenshell.file(schema="IFC4")
@@ -188,17 +173,15 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
         wall = create_element(f, context, w_def['name'], wall_placement, *w_def['dims'], style=styles_map["wall_style"])
         all_elements.append(wall)
 
-    # --- REFACTORED ROOF LOGIC ---
     roof_extrusion, roof_placement, roof_style = None, None, None
     roof_config = project.architecture.roof
 
     if roof_config:
         print(f"     - Creating roof of type: {roof_config.type}...")
-        roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h)) # Base placement on top of walls
+        roof_placement_3d = f.createIfcAxis2Placement3D(P(0.0, 0.0, h))
         roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
 
         if roof_config.type == 'GABLE':
-            # Use configured height, with a sensible default
             gable_height = roof_config.height if roof_config.height is not None else w / 4.0
             
             profile_points = [P(0.0, 0.0, 0.0), P(w, 0.0, 0.0), P(w / 2.0, 0.0, gable_height)]
@@ -210,16 +193,14 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
             roof_style = styles_map["roof_style"]
 
         elif roof_config.type == 'FLAT':
-            # Use configured thickness, with a sensible default
             roof_thickness = roof_config.thickness if roof_config.thickness is not None else 0.3
             
             flat_profile = f.createIfcRectangleProfileDef('AREA', 'Flat_Roof_Profile', None, w, d)
             extrusion_dir = f.createIfcDirection((0.0, 0.0, 1.0))
-            # The placement is already at height h, so we just extrude up by the thickness
             roof_extrusion = f.createIfcExtrudedAreaSolid(flat_profile, None, extrusion_dir, roof_thickness)
             roof_style = styles_map["flat_roof_style"]
 
-    else: # Fallback for backward compatibility
+    else:
         print("     - Creating roof (using fallback/legacy logic)...")
         gable_height = w / 4.0
         
@@ -234,7 +215,6 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
         roof_placement = f.createIfcLocalPlacement(building.ObjectPlacement, roof_placement_3d)
         roof_style = styles_map["roof_style"]
 
-    # Common roof creation logic
     if roof_extrusion and roof_placement:
         shape_rep = f.createIfcShapeRepresentation(context, "Body", "SweptSolid", [roof_extrusion])
         apply_style_to_representation(f, shape_rep, roof_style)
@@ -242,8 +222,6 @@ def create_3d_model(project: Project, placements: Dict[str, Dict[str, float]], o
         
         roof = f.createIfcRoof(ifcopenshell.guid.new(), owner_history, "Крыша", None, None, roof_placement, product_shape, "NOTDEFINED")
         ifcopenshell.api.run("aggregate.assign_object", f, relating_object=building, products=[roof])
-
-    # --- END OF ROOF LOGIC ---
 
     print("   - Placing equipment...")
     equipment_map: Dict[str, EquipmentItem] = {eq.id: eq for eq in project.equipment}
